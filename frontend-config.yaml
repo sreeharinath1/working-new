@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+data:
+  config.js: |
+    window.APP_CONFIG = {
+      gatewayPath: '/eazybank',
+      keycloakUrl: '/realms/master/protocol/openid-connect/token',
+      clientId: 'eazybank-callcenter-cc',
+      clientSecret: 'WbB2Vs8LSpmWvxXlbhMyfWt3fiwF7vF4',
+      tokenRefreshInterval: 50000,
+      services: {
+        accounts: { port: 8080 },
+        loans:    { port: 8090 },
+        cards:    { port: 9000 },
+        gateway:  { port: 8072 },
+        keycloak: { port: 80   }
+      }
+    };

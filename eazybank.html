@@ -1,0 +1,1137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>EazyBank Portal</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+
+<script>
+/* ═══════════════════════════════════════════════
+   ✅ CHANGE ONLY THIS CONFIG SECTION
+   ═══════════════════════════════════════════════ */
+window.CFG = {
+  /* EC2 Public IP — change when IP changes */
+  EC2_IP: '13.233.158.149',
+
+  /* Set to true  → uses relative paths via Nginx (PROD)
+     Set to false → uses direct EC2 IP:port (DEV/testing) */
+  USE_NGINX: true,
+
+  /* NodePorts — only used when USE_NGINX = false */
+  GATEWAY_PORT:  30564,
+  KEYCLOAK_PORT: 31479,
+  NGINX_PORT:    30080,
+
+  /* Keycloak credentials */
+  KC_REALM:  'master',
+  KC_CLIENT: 'eazybank-callcenter-cc',
+  KC_SECRET: 'WbB2Vs8LSpmWvxXlbhMyfWt3fiwF7vF4',
+
+  /* Token refresh interval in ms (50s = before 60s expiry) */
+  TOKEN_REFRESH_MS: 50000,
+};
+/* ═══════════════════════════════════════════════ */
+
+// Derived URLs — auto computed from config above
+window.CFG.GW   = CFG.USE_NGINX ? '' : `http://${CFG.EC2_IP}:${CFG.GATEWAY_PORT}`;
+window.CFG.KC   = CFG.USE_NGINX
+  ? `/realms/${CFG.KC_REALM}/protocol/openid-connect/token`
+  : `http://${CFG.EC2_IP}:${CFG.KEYCLOAK_PORT}/realms/${CFG.KC_REALM}/protocol/openid-connect/token`;
+</script>
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#06080d;--sf:#0c0f16;--sf2:#12161f;--sf3:#181d29;--sf4:#1e2535;
+  --b1:#ffffff08;--b2:#ffffff12;--b3:#ffffff1e;--b4:#ffffff28;
+  --gold:#c9a96e;--gold2:#e8c98e;--gold3:#f5deb3;--golddim:#c9a96e1a;--goldborder:#c9a96e33;
+  --tx:#edeae2;--tx2:#b8b4ac;--mu:#7a7670;--mu2:#4a4845;--mu3:#2e2c2a;
+  --green:#4caf7d;--greendim:#4caf7d18;--greenborder:#4caf7d33;
+  --red:#e05555;--reddim:#e0555518;--redborder:#e0555533;
+  --blue:#5b9bd6;--bluedim:#5b9bd618;--blueborder:#5b9bd633;
+  --amber:#d4984a;--amberdim:#d4984a18;--amberborder:#d4984a33;
+  --purple:#9b7dd4;--purpledim:#9b7dd418;
+  --font:'DM Sans',sans-serif;--serif:'DM Serif Display',serif;--mono:'DM Mono',monospace;
+  --r8:8px;--r10:10px;--r12:12px;--r14:14px;--r20:20px;
+}
+html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--font);overflow:hidden}
+
+/* ── SHELL ── */
+.shell{display:grid;grid-template-columns:260px 1fr;grid-template-rows:62px 1fr;height:100vh}
+
+/* ── TOPBAR ── */
+.topbar{
+  grid-column:1/-1;display:flex;align-items:center;padding:0 24px;
+  border-bottom:1px solid var(--b2);background:var(--sf);gap:16px;z-index:30;
+  position:relative;
+}
+.topbar::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--goldborder),transparent)}
+.brand{display:flex;align-items:center;gap:10px}
+.brand-logo{width:32px;height:32px;border-radius:8px;background:var(--golddim);border:1px solid var(--goldborder);display:flex;align-items:center;justify-content:center;font-size:16px}
+.brand-name{font-family:var(--serif);font-size:20px;color:var(--gold)}
+.brand-name small{font-family:var(--font);font-size:9px;color:var(--mu);font-weight:300;letter-spacing:.1em;margin-left:4px;vertical-align:middle;text-transform:uppercase}
+
+.cfg-pill{display:flex;align-items:center;gap:0;background:var(--sf2);border:1px solid var(--b2);border-radius:var(--r8);overflow:hidden;margin-left:auto}
+.cfg-seg{display:flex;align-items:center;gap:6px;padding:6px 12px;font-size:11px;border-right:1px solid var(--b2)}
+.cfg-seg:last-child{border-right:none}
+.cfg-seg label{color:var(--mu);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;font-size:10px}
+.cfg-seg input{background:transparent;border:none;outline:none;color:var(--gold2);font-family:var(--mono);font-size:11px}
+.cfg-seg input.ip{width:130px}
+.cfg-seg input.port{width:48px}
+.cfg-seg .mode-toggle{display:flex;gap:4px}
+.cfg-seg .mode-btn{padding:3px 8px;border-radius:5px;font-size:10px;cursor:pointer;border:1px solid var(--b2);background:transparent;color:var(--mu);font-family:var(--font);transition:all .15s}
+.cfg-seg .mode-btn.on{background:var(--golddim);border-color:var(--goldborder);color:var(--gold)}
+
+.tok-pill{display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:var(--r8);border:1px solid var(--b2);background:var(--sf2);font-size:11px;color:var(--mu);transition:border-color .3s}
+.tok-pill.ok{border-color:var(--greenborder);background:var(--greendim)}
+.tok-pill.err{border-color:var(--redborder);background:var(--reddim)}
+.tok-dot{width:6px;height:6px;border-radius:50%;background:var(--mu2);flex-shrink:0;transition:background .3s}
+.tok-pill.ok .tok-dot{background:var(--green);animation:pulse 2s infinite}
+.tok-pill.err .tok-dot{background:var(--red)}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 4px var(--green)}50%{opacity:.4;box-shadow:none}}
+.tok-text{color:var(--tx2)}
+.tok-pill.ok .tok-text{color:var(--green)}
+.tok-pill.err .tok-text{color:var(--red)}
+.tok-exp{font-family:var(--mono);font-size:10px;color:var(--mu)}
+
+.av{width:30px;height:30px;border-radius:50%;background:var(--golddim);border:1px solid var(--goldborder);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gold);font-weight:500;cursor:pointer;margin-left:4px;flex-shrink:0}
+
+/* ── SIDEBAR ── */
+.sidebar{background:var(--sf);border-right:1px solid var(--b2);overflow-y:auto;display:flex;flex-direction:column}
+.sidebar-top{padding:18px 16px 10px}
+.sidebar-search{display:flex;align-items:center;gap:8px;background:var(--sf2);border:1px solid var(--b2);border-radius:var(--r8);padding:7px 12px}
+.sidebar-search input{background:transparent;border:none;outline:none;color:var(--tx);font-family:var(--font);font-size:13px;width:100%}
+.sidebar-search input::placeholder{color:var(--mu2)}
+.sidebar-search span{color:var(--mu2);font-size:13px;flex-shrink:0}
+
+.nav-section{padding:0 10px;margin-top:6px}
+.nav-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--mu2);padding:12px 8px 5px;font-weight:500}
+.ni{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--r8);cursor:pointer;font-size:13px;color:var(--mu);transition:all .15s;border:1px solid transparent;position:relative;margin-bottom:1px}
+.ni:hover{background:var(--sf2);color:var(--tx2)}
+.ni.on{background:var(--sf3);color:var(--gold);border-color:var(--goldborder)}
+.ni.on::before{content:'';position:absolute;left:-1px;top:22%;bottom:22%;width:2px;background:var(--gold);border-radius:0 2px 2px 0}
+.ni-ico{width:24px;height:24px;border-radius:6px;background:var(--sf3);display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;transition:background .15s}
+.ni.on .ni-ico{background:var(--golddim)}
+.ni-label{flex:1}
+.ni-badge{font-family:var(--mono);font-size:9px;background:var(--b1);padding:2px 6px;border-radius:4px;color:var(--mu2);flex-shrink:0}
+.ni-status{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0}
+
+.sidebar-footer{margin-top:auto;padding:14px 16px;border-top:1px solid var(--b1)}
+.sf-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.sf-lbl{font-size:10px;color:var(--mu2);text-transform:uppercase;letter-spacing:.06em}
+.sf-val{font-family:var(--mono);font-size:10px;color:var(--mu)}
+.sf-arch{font-size:11px;color:var(--mu2);line-height:1.6;margin-top:8px}
+.sf-arch span{color:var(--gold);font-size:10px}
+
+/* ── MAIN ── */
+.main{overflow-y:auto;background:var(--bg)}
+.page{display:none;padding:24px 28px;min-height:calc(100vh - 62px);animation:fadeIn .2s ease}
+.page.on{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+
+/* ── PAGE HEADER ── */
+.ph{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px}
+.ph-left h2{font-family:var(--serif);font-size:26px;font-weight:400;margin-bottom:3px;line-height:1.2}
+.ph-left h2 em{color:var(--gold);font-style:italic}
+.ph-left p{font-size:13px;color:var(--mu);line-height:1.5}
+.ph-right{display:flex;gap:8px;align-items:center;margin-top:4px}
+.route-tag{font-family:var(--mono);font-size:10px;color:var(--mu);background:var(--sf2);border:1px solid var(--b2);padding:4px 10px;border-radius:20px}
+
+/* ── DASHBOARD STATS ── */
+.dash-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+.stat-card{background:var(--sf);border:1px solid var(--b2);border-radius:var(--r12);padding:16px 18px;position:relative;overflow:hidden;transition:all .2s;cursor:default}
+.stat-card:hover{border-color:var(--b3)}
+.stat-card .sc-icon{position:absolute;right:14px;top:12px;font-size:22px;opacity:.15}
+.stat-card .sc-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--mu);margin-bottom:10px}
+.stat-card .sc-val{font-family:var(--serif);font-size:26px;line-height:1;margin-bottom:5px}
+.stat-card .sc-sub{font-size:11px;color:var(--mu)}
+.stat-card.gold{border-color:var(--goldborder)}.stat-card.gold .sc-val{color:var(--gold2)}
+.stat-card.green{border-color:var(--greenborder)}.stat-card.green .sc-val{color:var(--green)}
+
+/* ── SERVICE CARDS ── */
+.svc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px}
+.svc-card{background:var(--sf);border:1px solid var(--b2);border-radius:var(--r12);padding:18px;cursor:pointer;transition:all .2s;position:relative;overflow:hidden}
+.svc-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;border-radius:var(--r12) var(--r12) 0 0;background:var(--c,transparent)}
+.svc-card:hover{border-color:var(--b4);transform:translateY(-2px);background:var(--sf2)}
+.svc-card .sc-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.svc-card .sc-name{font-size:14px;font-weight:500;flex:1}
+.svc-card .sc-port{font-family:var(--mono);font-size:10px;color:var(--mu);background:var(--sf3);padding:2px 8px;border-radius:20px}
+.svc-card .sc-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.svc-card .sc-desc{font-size:12px;color:var(--mu);line-height:1.55;margin-bottom:12px}
+.svc-card .sc-footer{display:flex;align-items:center;justify-content:space-between}
+.svc-card .sc-eps{font-size:11px;color:var(--mu2)}.svc-card .sc-eps b{color:var(--gold)}
+.svc-card .sc-arr{font-size:12px;color:var(--mu2);transition:transform .2s}
+.svc-card:hover .sc-arr{transform:translateX(3px);color:var(--gold)}
+
+/* ── ACTIVITY FEED ── */
+.activity-section{background:var(--sf);border:1px solid var(--b2);border-radius:var(--r12);padding:18px}
+.activity-section h3{font-size:13px;font-weight:500;color:var(--tx2);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.activity-section h3::after{content:'';flex:1;height:1px;background:var(--b2)}
+.activity-empty{text-align:center;padding:24px;color:var(--mu2);font-size:13px}
+.act-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--b1)}
+.act-item:last-child{border-bottom:none}
+.act-ico{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.act-ico.success{background:var(--greendim)}.act-ico.error{background:var(--reddim)}.act-ico.info{background:var(--bluedim)}
+.act-body{flex:1;min-width:0}
+.act-title{font-size:13px;color:var(--tx2);margin-bottom:2px}
+.act-meta{font-size:11px;color:var(--mu)}
+.act-status{font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:20px}
+.act-status.s2{background:var(--greendim);color:var(--green)}.act-status.s4{background:var(--amberdim);color:var(--amber)}.act-status.s5{background:var(--reddim);color:var(--red)}
+
+/* ── BANKING PAGE LAYOUT ── */
+.banking-layout{display:grid;grid-template-columns:1fr 380px;gap:20px;align-items:start}
+.banking-layout.full{grid-template-columns:1fr}
+
+/* ── TABS ── */
+.tabs{display:flex;gap:3px;background:var(--sf);border:1px solid var(--b2);border-radius:var(--r10);padding:3px;width:fit-content;margin-bottom:20px}
+.tab{padding:7px 16px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--mu);transition:all .15s;display:flex;align-items:center;gap:6px}
+.tab:hover{color:var(--tx2)}
+.tab.on{background:var(--sf3);color:var(--gold);font-weight:500}
+.tab-content{display:none}.tab-content.on{display:block;animation:fadeIn .15s ease}
+
+/* ── FORM PANEL ── */
+.form-card{background:var(--sf);border:1px solid var(--b2);border-radius:var(--r14);overflow:hidden;margin-bottom:16px}
+.form-card-head{padding:16px 20px;border-bottom:1px solid var(--b2);display:flex;align-items:center;gap:10px}
+.form-card-head .fch-icon{width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px}
+.form-card-head h3{font-size:15px;font-weight:500;flex:1}
+.form-card-head .method-badge{font-family:var(--mono);font-size:10px;font-weight:500;padding:3px 8px;border-radius:5px}
+.mb-post{background:var(--bluedim);color:var(--blue)}.mb-get{background:var(--greendim);color:var(--green)}.mb-put{background:var(--amberdim);color:var(--amber)}.mb-delete{background:var(--reddim);color:var(--red)}
+.form-card-body{padding:18px 20px}
+
+.fr{margin-bottom:14px}
+.fr label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--mu);margin-bottom:5px;font-weight:500}
+.fr input,.fr select,.fr textarea{
+  width:100%;background:var(--sf2);border:1px solid var(--b2);border-radius:var(--r8);
+  padding:9px 13px;color:var(--tx);font-family:var(--font);font-size:14px;outline:none;
+  transition:all .2s;
+}
+.fr input:focus,.fr select:focus,.fr textarea:focus{border-color:var(--goldborder);background:var(--sf3)}
+.fr input::placeholder{color:var(--mu2)}
+.fr select option{background:var(--sf2)}
+.fr-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.fr-hint{font-size:11px;color:var(--mu2);margin-top:4px}
+
+/* ── BUTTONS ── */
+.btn{display:inline-flex;align-items:center;gap:7px;padding:10px 20px;border-radius:var(--r8);border:none;font-family:var(--font);font-size:13.5px;font-weight:500;cursor:pointer;transition:all .18s;white-space:nowrap}
+.btn-primary{background:var(--gold);color:#07090e}.btn-primary:hover{background:var(--gold2);transform:translateY(-1px)}
+.btn-ghost{background:transparent;border:1px solid var(--b3);color:var(--tx2)}.btn-ghost:hover{border-color:var(--b4);background:var(--sf2)}
+.btn-danger{background:var(--reddim);border:1px solid var(--redborder);color:var(--red)}.btn-danger:hover{background:var(--red);color:#fff}
+.btn-success{background:var(--greendim);border:1px solid var(--greenborder);color:var(--green)}
+.btn-sm{padding:6px 14px;font-size:12px}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+
+/* ── RESPONSE CARD ── */
+.res-card{border:1px solid var(--b2);border-radius:var(--r10);overflow:hidden;background:var(--sf2);margin-top:14px}
+.res-head{padding:8px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--b1);background:var(--sf)}
+.res-body{padding:12px 14px;font-family:var(--mono);font-size:11.5px;line-height:1.8;white-space:pre-wrap;max-height:260px;overflow-y:auto}
+.pill{padding:3px 9px;border-radius:20px;font-family:var(--mono);font-size:11px;font-weight:500}
+.p2xx{background:var(--greendim);color:var(--green);border:1px solid var(--greenborder)}
+.p4xx{background:var(--amberdim);color:var(--amber);border:1px solid var(--amberborder)}
+.p5xx{background:var(--reddim);color:var(--red);border:1px solid var(--redborder)}
+.res-meta{font-size:11px;color:var(--mu);margin-left:auto;font-family:var(--mono)}
+
+/* ── ACCOUNT DISPLAY CARD ── */
+.bank-card{background:var(--sf2);border:1px solid var(--b2);border-radius:var(--r14);overflow:hidden;margin-bottom:14px}
+.bank-card-header{padding:20px;background:linear-gradient(135deg,var(--sf3),var(--sf2));border-bottom:1px solid var(--b2);position:relative}
+.bank-card-header::after{content:'◈';position:absolute;right:16px;bottom:-4px;font-size:60px;opacity:.04;color:var(--gold);pointer-events:none}
+.bch-name{font-family:var(--serif);font-size:20px;margin-bottom:3px}
+.bch-meta{font-size:12px;color:var(--mu);display:flex;align-items:center;gap:10px}
+.bch-badge{font-size:10px;font-family:var(--mono);padding:2px 8px;border-radius:20px;background:var(--golddim);color:var(--gold);border:1px solid var(--goldborder)}
+.bank-card-body{padding:16px 20px}
+.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.detail-item{background:var(--sf);border:1px solid var(--b1);border-radius:var(--r8);padding:10px 14px}
+.detail-item.full{grid-column:1/-1}
+.detail-item .di-label{font-size:10px;color:var(--mu);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
+.detail-item .di-val{font-family:var(--mono);font-size:13px;color:var(--tx)}
+
+/* ── LOAN / CARD DISPLAY ── */
+.fin-card{background:var(--sf2);border:1px solid var(--b2);border-radius:var(--r14);overflow:hidden;margin-bottom:14px}
+.fin-card-header{padding:18px 20px;background:var(--sf3);border-bottom:1px solid var(--b2);display:flex;justify-content:space-between;align-items:flex-start}
+.fch-type{font-family:var(--serif);font-size:18px;color:var(--gold2)}
+.fch-num{font-family:var(--mono);font-size:11px;color:var(--mu);margin-top:3px}
+.fin-card-body{padding:16px 20px}
+.progress-wrap{margin-bottom:14px}
+.progress-label-row{display:flex;justify-content:space-between;margin-bottom:6px}
+.progress-label-row span{font-size:11px;color:var(--mu)}
+.progress-label-row b{font-size:12px;font-weight:500}
+.progress-bar{height:5px;background:var(--b2);border-radius:3px;overflow:hidden}
+.progress-fill{height:100%;border-radius:3px;transition:width .6s ease}
+.amount-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.amount-item{text-align:center;background:var(--sf);border:1px solid var(--b1);border-radius:var(--r8);padding:10px 8px}
+.amount-item .ai-label{font-size:10px;color:var(--mu);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px}
+.amount-item .ai-val{font-family:var(--serif);font-size:17px}
+.amount-item .ai-val.gold{color:var(--gold2)}.amount-item .ai-val.green{color:var(--green)}.amount-item .ai-val.red{color:var(--red)}
+
+/* ── CUSTOMER 360 ── */
+.c360-profile{background:var(--sf);border:1px solid var(--goldborder);border-radius:var(--r14);padding:20px;margin-bottom:16px;display:flex;align-items:center;gap:16px}
+.c360-avatar{width:52px;height:52px;border-radius:50%;background:var(--golddim);border:2px solid var(--goldborder);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:20px;color:var(--gold);flex-shrink:0}
+.c360-name{font-family:var(--serif);font-size:20px;margin-bottom:4px}
+.c360-details{font-size:13px;color:var(--mu);display:flex;gap:16px}
+.c360-details span{display:flex;align-items:center;gap:5px}
+
+/* ── GATEWAY INFO ── */
+.info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.info-panel{background:var(--sf);border:1px solid var(--b2);border-radius:var(--r12);overflow:hidden}
+.info-panel-head{padding:12px 16px;border-bottom:1px solid var(--b2);display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500}
+.info-panel-head .iph-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.info-panel-body{padding:12px}
+.info-btn{width:100%;display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:var(--r8);border:1px solid var(--b2);background:transparent;color:var(--tx2);font-family:var(--font);font-size:12px;cursor:pointer;transition:all .15s;margin-bottom:6px;text-align:left}
+.info-btn:last-of-type{margin-bottom:8px}
+.info-btn:hover{background:var(--sf2);border-color:var(--b3);color:var(--tx)}
+.info-btn .ib-method{font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:4px;background:var(--greendim);color:var(--green);flex-shrink:0}
+.info-res{margin-top:4px}
+
+/* ── TOAST ── */
+#toast-container{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none;align-items:flex-end}
+.toast{background:var(--sf2);border:1px solid var(--b3);border-radius:var(--r10);padding:11px 16px;font-size:13px;display:flex;align-items:center;gap:9px;animation:toastIn .3s ease;box-shadow:0 8px 32px #00000080;max-width:300px;pointer-events:all}
+@keyframes toastIn{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
+.toast.success{border-color:var(--greenborder)}.toast.error{border-color:var(--redborder)}.toast.info{border-color:var(--blueborder)}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--b3);border-radius:4px}
+::-webkit-scrollbar-thumb:hover{background:var(--b4)}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ══════════ TOPBAR ══════════ -->
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-logo">🏦</div>
+    <div class="brand-name">EazyBank <small>Portal</small></div>
+  </div>
+
+  <div class="cfg-pill">
+    <div class="cfg-seg">
+      <label>EC2 IP</label>
+      <input class="ip" id="cfg-ip" value="13.233.158.149" spellcheck="false" onchange="applyConfig()"/>
+    </div>
+    <div class="cfg-seg">
+      <label>Mode</label>
+      <div class="mode-toggle">
+        <button class="mode-btn on" id="btn-nginx" onclick="setMode('nginx')">Nginx</button>
+        <button class="mode-btn" id="btn-direct" onclick="setMode('direct')">Direct</button>
+      </div>
+    </div>
+    <div class="cfg-seg" id="port-seg" style="display:none">
+      <label>GW Port</label>
+      <input class="port" id="cfg-gwport" value="30564" onchange="applyConfig()"/>
+      <label style="margin-left:8px">KC Port</label>
+      <input class="port" id="cfg-kcport" value="31479" onchange="applyConfig()"/>
+    </div>
+  </div>
+
+  <div class="tok-pill" id="tokPill">
+    <div class="tok-dot"></div>
+    <span class="tok-text" id="tokLabel">Authenticating...</span>
+    <span class="tok-exp" id="tokExp"></span>
+  </div>
+  <div class="av">SR</div>
+</header>
+
+<!-- ══════════ SIDEBAR ══════════ -->
+<aside class="sidebar">
+  <div class="sidebar-top">
+    <div class="sidebar-search">
+      <span>🔍</span>
+      <input placeholder="Search..." oninput="filterNav(this.value)"/>
+    </div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-lbl">Overview</div>
+    <div class="ni on" onclick="nav('dash',this)" data-label="dashboard">
+      <div class="ni-ico">◈</div><div class="ni-label">Dashboard</div>
+    </div>
+
+    <div class="nav-lbl">Banking</div>
+    <div class="ni" onclick="nav('accounts',this)" data-label="accounts">
+      <div class="ni-ico">🏦</div><div class="ni-label">Accounts</div>
+      <span class="ni-badge">8080</span><div class="ni-status"></div>
+    </div>
+    <div class="ni" onclick="nav('loans',this)" data-label="loans">
+      <div class="ni-ico">💳</div><div class="ni-label">Loans</div>
+      <span class="ni-badge">8090</span><div class="ni-status"></div>
+    </div>
+    <div class="ni" onclick="nav('cards',this)" data-label="cards">
+      <div class="ni-ico">💰</div><div class="ni-label">Cards</div>
+      <span class="ni-badge">9000</span><div class="ni-status"></div>
+    </div>
+
+    <div class="nav-lbl">Analytics</div>
+    <div class="ni" onclick="nav('customer',this)" data-label="customer 360">
+      <div class="ni-ico">👤</div><div class="ni-label">Customer 360°</div>
+    </div>
+    <div class="ni" onclick="nav('gateway',this)" data-label="gateway info">
+      <div class="ni-ico">⚡</div><div class="ni-label">Gateway Info</div>
+    </div>
+  </div>
+
+  <div class="sidebar-footer">
+    <div class="sf-row">
+      <span class="sf-lbl">Gateway</span>
+      <span class="sf-val" id="sf-gw">via Nginx</span>
+    </div>
+    <div class="sf-row">
+      <span class="sf-lbl">Keycloak</span>
+      <span class="sf-val" id="sf-kc">via Nginx</span>
+    </div>
+    <div class="sf-arch">
+      Browser → <span>Nginx:30080</span> → Gateway → Services
+    </div>
+  </div>
+</aside>
+
+<!-- ══════════ MAIN ══════════ -->
+<main class="main">
+
+<!-- ─── DASHBOARD ─── -->
+<div id="page-dash" class="page on">
+  <div class="ph">
+    <div class="ph-left">
+      <h2>Welcome to <em>EazyBank</em></h2>
+      <p>Production stack · Nginx → Spring Cloud Gateway → Kubernetes Microservices · EC2 <span id="dash-ip" style="font-family:var(--mono);color:var(--gold)">13.233.158.149</span></p>
+    </div>
+  </div>
+
+  <div class="dash-grid">
+    <div class="stat-card gold"><div class="sc-icon">🌐</div><div class="sc-label">Frontend</div><div class="sc-val">Nginx</div><div class="sc-sub">2 replicas · NodePort 30080</div></div>
+    <div class="stat-card"><div class="sc-icon">⚡</div><div class="sc-label">API Gateway</div><div class="sc-val">ClusterIP</div><div class="sc-sub">gatewayserver:8072 · internal</div></div>
+    <div class="stat-card green"><div class="sc-icon">🔐</div><div class="sc-label">Auth Status</div><div class="sc-val" id="dash-auth-val">—</div><div class="sc-sub" id="dash-auth-sub">Keycloak JWT</div></div>
+    <div class="stat-card"><div class="sc-icon">☸️</div><div class="sc-label">K8s Services</div><div class="sc-val">7</div><div class="sc-sub">accounts·loans·cards·gateway·config·eureka·message</div></div>
+  </div>
+
+  <div class="svc-grid">
+    <div class="svc-card" style="--c:var(--green)" onclick="nav('accounts',document.querySelectorAll('.ni')[1])">
+      <div class="sc-head"><div class="sc-dot" style="background:var(--green)"></div><div class="sc-name">Accounts Service</div><div class="sc-port">:8080</div></div>
+      <div class="sc-desc">Create and manage bank accounts. Supports savings, current and salary accounts with branch address management.</div>
+      <div class="sc-footer"><div class="sc-eps"><b>6</b> endpoints · CRUD + ContactInfo</div><div class="sc-arr">→</div></div>
+    </div>
+    <div class="svc-card" style="--c:var(--blue)" onclick="nav('loans',document.querySelectorAll('.ni')[2])">
+      <div class="sc-head"><div class="sc-dot" style="background:var(--blue)"></div><div class="sc-name">Loans Service</div><div class="sc-port">:8090</div></div>
+      <div class="sc-desc">Home, vehicle and personal loan management. Track repayment progress with outstanding amounts and payment history.</div>
+      <div class="sc-footer"><div class="sc-eps"><b>5</b> endpoints · CRUD + BuildInfo</div><div class="sc-arr">→</div></div>
+    </div>
+    <div class="svc-card" style="--c:var(--amber)" onclick="nav('cards',document.querySelectorAll('.ni')[3])">
+      <div class="sc-head"><div class="sc-dot" style="background:var(--amber)"></div><div class="sc-name">Cards Service</div><div class="sc-port">:9000</div></div>
+      <div class="sc-desc">Credit and debit card management. Monitor spending limits, utilization percentage and available credit in real time.</div>
+      <div class="sc-footer"><div class="sc-eps"><b>5</b> endpoints · CRUD + BuildInfo</div><div class="sc-arr">→</div></div>
+    </div>
+    <div class="svc-card" style="--c:var(--gold)" onclick="nav('customer',document.querySelectorAll('.ni')[4])">
+      <div class="sc-head"><div class="sc-dot" style="background:var(--gold)"></div><div class="sc-name">Customer 360°</div><div class="sc-port">gateway</div></div>
+      <div class="sc-desc">Aggregated customer profile — single gateway call returns account, loan and card details via Feign client orchestration.</div>
+      <div class="sc-footer"><div class="sc-eps"><b>1</b> endpoint · Feign orchestration</div><div class="sc-arr">→</div></div>
+    </div>
+    <div class="svc-card" style="--c:var(--mu2)" onclick="nav('gateway',document.querySelectorAll('.ni')[5])">
+      <div class="sc-head"><div class="sc-dot" style="background:var(--mu)"></div><div class="sc-name">Gateway Info</div><div class="sc-port">:8072</div></div>
+      <div class="sc-desc">contact-info, build-info and java-version endpoints for all services routed through Spring Cloud Gateway.</div>
+      <div class="sc-footer"><div class="sc-eps"><b>9</b> info endpoints</div><div class="sc-arr">→</div></div>
+    </div>
+    <div class="svc-card" style="--c:var(--purple)">
+      <div class="sc-head"><div class="sc-dot" style="background:var(--purple)"></div><div class="sc-name">Auth · Keycloak</div><div class="sc-port" id="dash-kc-port">:31479</div></div>
+      <div class="sc-desc">OAuth2 client credentials flow. Token auto-fetched on load and refreshed every 50s. All API calls authenticated automatically.</div>
+      <div class="sc-footer"><div class="sc-eps" id="dash-kc-status">Initializing...</div></div>
+    </div>
+  </div>
+
+  <div class="activity-section">
+    <h3>Recent Activity</h3>
+    <div id="activity-feed"><div class="activity-empty">No activity yet · make an API call to see it here</div></div>
+  </div>
+</div>
+
+<!-- ─── ACCOUNTS ─── -->
+<div id="page-accounts" class="page">
+  <div class="ph">
+    <div class="ph-left">
+      <h2><em>Accounts</em> Service</h2>
+      <p>Manage bank accounts · routed via Nginx → gatewayserver:8072</p>
+    </div>
+    <div class="ph-right"><span class="route-tag">GET/POST/PUT/DELETE /eazybank/accounts/api</span></div>
+  </div>
+  <div class="banking-layout">
+    <div>
+      <div class="tabs">
+        <div class="tab on" onclick="switchTab('ac','create',this)">⚡ Create</div>
+        <div class="tab" onclick="switchTab('ac','fetch',this)">🔍 Fetch</div>
+        <div class="tab" onclick="switchTab('ac','update',this)">✏️ Update</div>
+        <div class="tab" onclick="switchTab('ac','delete',this)">🗑️ Delete</div>
+      </div>
+
+      <div id="ac-create" class="tab-content on">
+        <div class="form-card">
+          <div class="form-card-head">
+            <div class="fch-icon" style="background:var(--bluedim)">⚡</div>
+            <h3>Create New Account</h3>
+            <span class="method-badge mb-post">POST</span>
+          </div>
+          <div class="form-card-body">
+            <div class="fr"><label>Full Name</label><input id="ac-name" placeholder="e.g. Madan Reddy"/></div>
+            <div class="fr"><label>Email Address</label><input id="ac-email" type="email" placeholder="e.g. user@eazybytes.com"/></div>
+            <div class="fr"><label>Mobile Number</label><input id="ac-mobile" placeholder="e.g. 4354437687"/><div class="fr-hint">10-digit mobile number · used as customer ID</div></div>
+            <div class="btn-row">
+              <button class="btn btn-primary" onclick="acCreate()">⚡ Create Account</button>
+              <button class="btn btn-ghost btn-sm" onclick="fillAcDemo()">Fill Demo Data</button>
+            </div>
+            <div id="ac-create-result"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="ac-fetch" class="tab-content">
+        <div class="form-card">
+          <div class="form-card-head">
+            <div class="fch-icon" style="background:var(--greendim)">🔍</div>
+            <h3>Fetch Account Details</h3>
+            <span class="method-badge mb-get">GET</span>
+          </div>
+          <div class="form-card-body">
+            <div class="fr"><label>Mobile Number</label><input id="ac-fetch-mobile" placeholder="e.g. 4354437687"/></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="acFetch()">🔍 Fetch Account</button></div>
+            <div id="ac-fetch-result"></div>
+          </div>
+        </div>
+        <div id="ac-fetch-display"></div>
+      </div>
+
+      <div id="ac-update" class="tab-content">
+        <div class="form-card">
+          <div class="form-card-head">
+            <div class="fch-icon" style="background:var(--amberdim)">✏️</div>
+            <h3>Update Account</h3>
+            <span class="method-badge mb-put">PUT</span>
+          </div>
+          <div class="form-card-body">
+            <div class="fr-row">
+              <div class="fr"><label>Full Name</label><input id="ac-upd-name" placeholder="Updated name"/></div>
+              <div class="fr"><label>Mobile Number</label><input id="ac-upd-mobile" placeholder="4354437687"/></div>
+            </div>
+            <div class="fr"><label>Email</label><input id="ac-upd-email" placeholder="user@eazybytes.com"/></div>
+            <div class="fr-row">
+              <div class="fr"><label>Account Number</label><input id="ac-upd-accno" placeholder="1105557729"/></div>
+              <div class="fr"><label>Account Type</label>
+                <select id="ac-upd-type"><option>Savings</option><option>Current</option><option>Salary</option></select>
+              </div>
+            </div>
+            <div class="fr"><label>Branch Address</label><input id="ac-upd-addr" placeholder="123 Main Street, New York"/></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="acUpdate()">💾 Update Account</button></div>
+            <div id="ac-update-result"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="ac-delete" class="tab-content">
+        <div class="form-card">
+          <div class="form-card-head">
+            <div class="fch-icon" style="background:var(--reddim)">🗑️</div>
+            <h3>Delete Account</h3>
+            <span class="method-badge mb-delete">DELETE</span>
+          </div>
+          <div class="form-card-body">
+            <div class="fr"><label>Mobile Number</label><input id="ac-del-mobile" placeholder="e.g. 4354437687"/></div>
+            <div class="btn-row"><button class="btn btn-danger" onclick="acDelete()">🗑️ Delete Account</button></div>
+            <div id="ac-delete-result"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Info Panel -->
+    <div>
+      <div class="form-card">
+        <div class="form-card-head"><div class="fch-icon" style="background:var(--greendim)">ℹ️</div><h3>Service Info</h3></div>
+        <div class="form-card-body">
+          <div class="btn-row" style="flex-direction:column;margin-top:0;gap:6px">
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/accounts/api/contact-info','ac-info-res')">contact-info</button>
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/accounts/api/build-info','ac-info-res')">build-info</button>
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/accounts/api/java-version','ac-info-res')">java-version</button>
+          </div>
+          <div id="ac-info-res"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── LOANS ─── -->
+<div id="page-loans" class="page">
+  <div class="ph">
+    <div class="ph-left"><h2><em>Loans</em> Service</h2><p>Manage loans · routed via Nginx → gatewayserver:8072</p></div>
+    <div class="ph-right"><span class="route-tag">GET/POST/PUT/DELETE /eazybank/loans/api</span></div>
+  </div>
+  <div class="banking-layout">
+    <div>
+      <div class="tabs">
+        <div class="tab on" onclick="switchTab('ln','create',this)">⚡ Create</div>
+        <div class="tab" onclick="switchTab('ln','fetch',this)">🔍 Fetch</div>
+        <div class="tab" onclick="switchTab('ln','update',this)">✏️ Update</div>
+        <div class="tab" onclick="switchTab('ln','delete',this)">🗑️ Delete</div>
+      </div>
+      <div id="ln-create" class="tab-content on">
+        <div class="form-card">
+          <div class="form-card-head"><div class="fch-icon" style="background:var(--bluedim)">💳</div><h3>Create Loan</h3><span class="method-badge mb-post">POST</span></div>
+          <div class="form-card-body">
+            <div class="fr"><label>Mobile Number</label><input id="ln-mobile" placeholder="e.g. 4354437687"/><div class="fr-hint">System auto-generates loan number, type and amounts</div></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="lnCreate()">⚡ Create Loan</button></div>
+            <div id="ln-create-result"></div>
+          </div>
+        </div>
+      </div>
+      <div id="ln-fetch" class="tab-content">
+        <div class="form-card">
+          <div class="form-card-head"><div class="fch-icon" style="background:var(--greendim)">🔍</div><h3>Fetch Loan Details</h3><span class="method-badge mb-get">GET</span></div>
+          <div class="form-card-body">
+            <div class="fr"><label>Mobile Number</label><input id="ln-fetch-mobile" placeholder="e.g. 4354437687"/></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="lnFetch()">🔍 Fetch Loan</button></div>
+            <div id="ln-fetch-result"></div>
+          </div>
+        </div>
+        <div id="ln-fetch-display"></div>
+      </div>
+      <div id="ln-update" class="tab-content">
+        <div class="form-card">
+          <div class="form-card-head"><div class="fch-icon" style="background:var(--amberdim)">✏️</div><h3>Update Loan</h3><span class="method-badge mb-put">PUT</span></div>
+          <div class="form-card-body">
+            <div class="fr-row">
+              <div class="fr"><label>Mobile Number</label><input id="ln-upd-mobile" placeholder="4354437687"/></div>
+              <div class="fr"><label>Loan Number</label><input id="ln-upd-num" placeholder="10071469799154"/></div>
+            </div>
+            <div class="fr"><label>Loan Type</label>
+              <select id="ln-upd-type"><option>Home Loan</option><option>Vehicle Loan</option><option>Personal Loan</option><option>Education Loan</option></select>
+            </div>
+            <div class="fr-row">
+              <div class="fr"><label>Total Loan (₹)</label><input id="ln-upd-total" type="number" placeholder="100000"/></div>
+              <div class="fr"><label>Amount Paid (₹)</label><input id="ln-upd-paid" type="number" placeholder="10000"/></div>
+            </div>
+            <div class="fr"><label>Outstanding Amount (₹)</label><input id="ln-upd-out" type="number" placeholder="90000"/></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="lnUpdate()">💾 Update Loan</button></div>
+            <div id="ln-update-result"></div>
+          </div>
+        </div>
+      </div>
+      <div id="ln-delete" class="tab-content">
+        <div class="form-card">
+          <div class="form-card-head"><div class="fch-icon" style="background:var(--reddim)">🗑️</div><h3>Delete Loan</h3><span class="method-badge mb-delete">DELETE</span></div>
+          <div class="form-card-body">
+            <div class="fr"><label>Mobile Number</label><input id="ln-del-mobile" placeholder="e.g. 4354437687"/></div>
+            <div class="btn-row"><button class="btn btn-danger" onclick="lnDelete()">🗑️ Delete Loan</button></div>
+            <div id="ln-delete-result"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="form-card">
+        <div class="form-card-head"><div class="fch-icon" style="background:var(--bluedim)">ℹ️</div><h3>Service Info</h3></div>
+        <div class="form-card-body">
+          <div class="btn-row" style="flex-direction:column;margin-top:0;gap:6px">
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/loans/api/contact-info','ln-info-res')">contact-info</button>
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/loans/api/build-info','ln-info-res')">build-info</button>
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/loans/api/java-version','ln-info-res')">java-version</button>
+          </div>
+          <div id="ln-info-res"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── CARDS ─── -->
+<div id="page-cards" class="page">
+  <div class="ph">
+    <div class="ph-left"><h2><em>Cards</em> Service</h2><p>Manage cards · routed via Nginx → gatewayserver:8072</p></div>
+    <div class="ph-right"><span class="route-tag">GET/POST/PUT/DELETE /eazybank/cards/api</span></div>
+  </div>
+  <div class="banking-layout">
+    <div>
+      <div class="tabs">
+        <div class="tab on" onclick="switchTab('cd','create',this)">⚡ Create</div>
+        <div class="tab" onclick="switchTab('cd','fetch',this)">🔍 Fetch</div>
+        <div class="tab" onclick="switchTab('cd','update',this)">✏️ Update</div>
+        <div class="tab" onclick="switchTab('cd','delete',this)">🗑️ Delete</div>
+      </div>
+      <div id="cd-create" class="tab-content on">
+        <div class="form-card">
+          <div class="form-card-head"><div class="fch-icon" style="background:var(--bluedim)">💰</div><h3>Create Card</h3><span class="method-badge mb-post">POST</span></div>
+          <div class="form-card-body">
+            <div class="fr"><label>Mobile Number</label><input id="cd-mobile" placeholder="e.g. 4354437687"/><div class="fr-hint">System auto-generates card number and sets default limits</div></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="cdCreate()">⚡ Create Card</button></div>
+            <div id="cd-create-result"></div>
+          </div>
+        </div>
+      </div>
+      <div id="cd-fetch" class="tab-content">
+        <div class="form-card">
+          <div class="form-card-head"><div class="fch-icon" style="background:var(--greendim)">🔍</div><h3>Fetch Card Details</h3><span class="method-badge mb-get">GET</span></div>
+          <div class="form-card-body">
+            <div class="fr"><label>Mobile Number</label><input id="cd-fetch-mobile" placeholder="e.g. 4354437687"/></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="cdFetch()">🔍 Fetch Card</button></div>
+            <div id="cd-fetch-result"></div>
+          </div>
+        </div>
+        <div id="cd-fetch-display"></div>
+      </div>
+      <div id="cd-update" class="tab-content">
+        <div class="form-card">
+          <div class="form-card-head"><div class="fch-icon" style="background:var(--amberdim)">✏️</div><h3>Update Card</h3><span class="method-badge mb-put">PUT</span></div>
+          <div class="form-card-body">
+            <div class="fr-row">
+              <div class="fr"><label>Mobile Number</label><input id="cd-upd-mobile" placeholder="4354437687"/></div>
+              <div class="fr"><label>Card Number</label><input id="cd-upd-num" placeholder="100107091026"/></div>
+            </div>
+            <div class="fr"><label>Card Type</label><select id="cd-upd-type"><option>Credit Card</option><option>Debit Card</option></select></div>
+            <div class="fr-row">
+              <div class="fr"><label>Total Limit (₹)</label><input id="cd-upd-total" type="number" placeholder="100000"/></div>
+              <div class="fr"><label>Amount Used (₹)</label><input id="cd-upd-used" type="number" placeholder="10000"/></div>
+            </div>
+            <div class="fr"><label>Available Amount (₹)</label><input id="cd-upd-avail" type="number" placeholder="90000"/></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="cdUpdate()">💾 Update Card</button></div>
+            <div id="cd-update-result"></div>
+          </div>
+        </div>
+      </div>
+      <div id="cd-delete" class="tab-content">
+        <div class="form-card">
+          <div class="form-card-head"><div class="fch-icon" style="background:var(--reddim)">🗑️</div><h3>Delete Card</h3><span class="method-badge mb-delete">DELETE</span></div>
+          <div class="form-card-body">
+            <div class="fr"><label>Mobile Number</label><input id="cd-del-mobile" placeholder="e.g. 4354437687"/></div>
+            <div class="btn-row"><button class="btn btn-danger" onclick="cdDelete()">🗑️ Delete Card</button></div>
+            <div id="cd-del-result"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="form-card">
+        <div class="form-card-head"><div class="fch-icon" style="background:var(--amberdim)">ℹ️</div><h3>Service Info</h3></div>
+        <div class="form-card-body">
+          <div class="btn-row" style="flex-direction:column;margin-top:0;gap:6px">
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/cards/api/contact-info','cd-info-res')">contact-info</button>
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/cards/api/build-info','cd-info-res')">build-info</button>
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/cards/api/java-version','cd-info-res')">java-version</button>
+          </div>
+          <div id="cd-info-res"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── CUSTOMER 360 ─── -->
+<div id="page-customer" class="page">
+  <div class="ph">
+    <div class="ph-left"><h2><em>Customer 360°</em> View</h2><p>Aggregated profile · single gateway call via Feign client orchestration</p></div>
+    <div class="ph-right"><span class="route-tag">GET /eazybank/accounts/api/fetchCustomerDetails</span></div>
+  </div>
+  <div class="banking-layout">
+    <div>
+      <div class="form-card">
+        <div class="form-card-head"><div class="fch-icon" style="background:var(--golddim)">👤</div><h3>Fetch Full Customer Profile</h3><span class="method-badge mb-get">GET</span></div>
+        <div class="form-card-body">
+          <div class="fr"><label>Mobile Number</label><input id="cust-mobile" placeholder="e.g. 4354437687"/><div class="fr-hint">Returns account + loan + card in one call</div></div>
+          <div class="btn-row"><button class="btn btn-primary" onclick="custFetch()">🔍 Fetch Customer Profile</button></div>
+          <div id="cust-result"></div>
+        </div>
+      </div>
+      <div id="cust-display"></div>
+    </div>
+    <div>
+      <div class="form-card">
+        <div class="form-card-head"><div class="fch-icon" style="background:var(--golddim)">💡</div><h3>How it works</h3></div>
+        <div class="form-card-body" style="font-size:13px;color:var(--mu);line-height:1.7">
+          <p style="margin-bottom:10px">Single GET call to <span style="font-family:var(--mono);color:var(--gold);font-size:11px">/api/fetchCustomerDetails</span></p>
+          <p style="margin-bottom:10px">Accounts service uses <b style="color:var(--tx2)">OpenFeign</b> to call Loans and Cards services internally.</p>
+          <p>Response contains all 3 service data in one JSON object — no client-side stitching needed.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── GATEWAY INFO ─── -->
+<div id="page-gateway" class="page">
+  <div class="ph">
+    <div class="ph-left"><h2>Gateway <em>Info</em> Endpoints</h2><p>contact-info · build-info · java-version for all services</p></div>
+  </div>
+  <div class="info-grid">
+    <div class="info-panel">
+      <div class="info-panel-head"><div class="iph-dot" style="background:var(--green)"></div>Accounts · :8080</div>
+      <div class="info-panel-body">
+        <button class="info-btn" onclick="infoCall('/eazybank/accounts/api/contact-info','gw-ac-res')"><span class="ib-method">GET</span>contact-info</button>
+        <button class="info-btn" onclick="infoCall('/eazybank/accounts/api/build-info','gw-ac-res')"><span class="ib-method">GET</span>build-info</button>
+        <button class="info-btn" onclick="infoCall('/eazybank/accounts/api/java-version','gw-ac-res')"><span class="ib-method">GET</span>java-version</button>
+        <div class="info-res" id="gw-ac-res"></div>
+      </div>
+    </div>
+    <div class="info-panel">
+      <div class="info-panel-head"><div class="iph-dot" style="background:var(--blue)"></div>Loans · :8090</div>
+      <div class="info-panel-body">
+        <button class="info-btn" onclick="infoCall('/eazybank/loans/api/contact-info','gw-ln-res')"><span class="ib-method">GET</span>contact-info</button>
+        <button class="info-btn" onclick="infoCall('/eazybank/loans/api/build-info','gw-ln-res')"><span class="ib-method">GET</span>build-info</button>
+        <button class="info-btn" onclick="infoCall('/eazybank/loans/api/java-version','gw-ln-res')"><span class="ib-method">GET</span>java-version</button>
+        <div class="info-res" id="gw-ln-res"></div>
+      </div>
+    </div>
+    <div class="info-panel">
+      <div class="info-panel-head"><div class="iph-dot" style="background:var(--amber)"></div>Cards · :9000</div>
+      <div class="info-panel-body">
+        <button class="info-btn" onclick="infoCall('/eazybank/cards/api/contact-info','gw-cd-res')"><span class="ib-method">GET</span>contact-info</button>
+        <button class="info-btn" onclick="infoCall('/eazybank/cards/api/build-info','gw-cd-res')"><span class="ib-method">GET</span>build-info</button>
+        <button class="info-btn" onclick="infoCall('/eazybank/cards/api/java-version','gw-cd-res')"><span class="ib-method">GET</span>java-version</button>
+        <div class="info-res" id="gw-cd-res"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</main>
+</div>
+<div id="toast-container"></div>
+
+<script>
+// ═══════════════════════════════════════════
+// CONFIG MANAGEMENT
+// ═══════════════════════════════════════════
+let MODE = 'nginx'; // 'nginx' or 'direct'
+
+function setMode(m) {
+  MODE = m;
+  document.getElementById('btn-nginx').className = 'mode-btn' + (m==='nginx'?' on':'');
+  document.getElementById('btn-direct').className = 'mode-btn' + (m==='direct'?' on':'');
+  document.getElementById('port-seg').style.display = m==='direct' ? 'flex' : 'none';
+  applyConfig();
+}
+
+function applyConfig() {
+  const ip = document.getElementById('cfg-ip').value.trim();
+  const gwPort = document.getElementById('cfg-gwport').value.trim();
+  const kcPort = document.getElementById('cfg-kcport').value.trim();
+  document.getElementById('dash-ip').textContent = ip;
+
+  if (MODE === 'nginx') {
+    CFG.GW = '';
+    CFG.KC = `/realms/${CFG.KC_REALM}/protocol/openid-connect/token`;
+    document.getElementById('sf-gw').textContent = 'via Nginx';
+    document.getElementById('sf-kc').textContent = 'via Nginx';
+  } else {
+    CFG.GW = `http://${ip}:${gwPort}`;
+    CFG.KC = `http://${ip}:${kcPort}/realms/${CFG.KC_REALM}/protocol/openid-connect/token`;
+    document.getElementById('sf-gw').textContent = `${ip}:${gwPort}`;
+    document.getElementById('sf-kc').textContent = `${ip}:${kcPort}`;
+    document.getElementById('dash-kc-port').textContent = `:${kcPort}`;
+  }
+  fetchToken();
+}
+
+// ═══════════════════════════════════════════
+// TOKEN MANAGEMENT
+// ═══════════════════════════════════════════
+let TOKEN = null;
+let tokenExpiry = 0;
+let tokenTimer = null;
+
+async function fetchToken() {
+  try {
+    const res = await fetch(CFG.KC, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: `grant_type=client_credentials&client_id=${CFG.KC_CLIENT}&client_secret=${CFG.KC_SECRET}&scope=openid profile email`
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    TOKEN = data.access_token;
+    tokenExpiry = Date.now() + data.expires_in * 1000;
+    setTokenUI(true, data.expires_in);
+    document.getElementById('dash-auth-val').textContent = 'Active';
+    document.getElementById('dash-auth-sub').textContent = `JWT · expires in ${data.expires_in}s`;
+    document.getElementById('dash-kc-status').innerHTML = '<b style="color:var(--green)">✅ Token active</b> · auto-refresh every 50s';
+  } catch(e) {
+    TOKEN = null;
+    setTokenUI(false, 0);
+    document.getElementById('dash-auth-val').textContent = 'Error';
+    document.getElementById('dash-kc-status').innerHTML = `<b style="color:var(--red)">❌ ${e.message}</b>`;
+  }
+}
+
+function setTokenUI(ok, exp) {
+  const pill = document.getElementById('tokPill');
+  pill.className = 'tok-pill ' + (ok ? 'ok' : 'err');
+  document.getElementById('tokLabel').textContent = ok ? 'Authenticated' : 'Auth Error';
+  document.getElementById('tokExp').textContent = ok ? `${exp}s` : '';
+}
+
+// countdown
+setInterval(() => {
+  if (tokenExpiry > 0 && TOKEN) {
+    const left = Math.max(0, Math.round((tokenExpiry - Date.now()) / 1000));
+    document.getElementById('tokExp').textContent = `${left}s`;
+  }
+}, 1000);
+
+fetchToken();
+setInterval(fetchToken, CFG.TOKEN_REFRESH_MS);
+
+// ═══════════════════════════════════════════
+// API ENGINE
+// ═══════════════════════════════════════════
+const activityLog = [];
+
+async function api(method, path, body, resultEl, extraHeaders = {}) {
+  const el = document.getElementById(resultEl);
+  const fullPath = CFG.GW + path;
+  el.innerHTML = `<div class="res-card"><div class="res-head"><span style="color:var(--mu);font-size:12px;font-style:italic">⟳ Sending ${method} ${path}...</span></div></div>`;
+  const t0 = Date.now();
+  try {
+    const headers = {'Content-Type': 'application/json', ...extraHeaders};
+    if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+    const opts = {method, headers};
+    if (body && ['POST','PUT','PATCH'].includes(method)) opts.body = JSON.stringify(body);
+    const res = await fetch(fullPath, opts);
+    const ms = Date.now() - t0;
+    const txt = await res.text();
+    let pretty = txt, parsed = null;
+    try { parsed = JSON.parse(txt); pretty = JSON.stringify(parsed, null, 2); } catch {}
+    const sc = res.status < 300 ? 'p2xx' : res.status < 500 ? 'p4xx' : 'p5xx';
+    el.innerHTML = `<div class="res-card">
+      <div class="res-head">
+        <span class="pill ${sc}">${res.status} ${res.statusText}</span>
+        <span style="color:var(--mu);font-size:11px;font-family:var(--mono)">${ms}ms</span>
+        <span class="res-meta">${method} ${path}</span>
+      </div>
+      <div class="res-body">${escHtml(pretty)}</div>
+    </div>`;
+    const type = res.ok ? 'success' : 'error';
+    toast((res.ok ? '✅' : '⚠️') + ' ' + res.status + ' ' + res.statusText, type);
+    addActivity(method, path, res.status, ms, type);
+    return parsed;
+  } catch(e) {
+    const ms = Date.now() - t0;
+    el.innerHTML = `<div class="res-card">
+      <div class="res-head"><span class="pill p5xx">Network Error</span><span style="color:var(--mu);font-size:11px;font-family:var(--mono)">${ms}ms</span></div>
+      <div class="res-body" style="color:var(--red)">${escHtml(e.message)}\n\nCheck:\n• Is service running? kubectl get pods\n• Is port open in AWS Security Group?\n• Is Nginx running? kubectl get pods | grep nginx</div>
+    </div>`;
+    toast('❌ ' + e.message, 'error');
+    addActivity(method, path, 0, ms, 'error');
+    return null;
+  }
+}
+
+function addActivity(method, path, status, ms, type) {
+  activityLog.unshift({method, path, status, ms, type, time: new Date().toLocaleTimeString()});
+  if (activityLog.length > 10) activityLog.pop();
+  const feed = document.getElementById('activity-feed');
+  if (!feed) return;
+  feed.innerHTML = activityLog.map(a => `
+    <div class="act-item">
+      <div class="act-ico ${a.type}">${a.type==='success'?'✅':a.type==='error'?'❌':'ℹ️'}</div>
+      <div class="act-body">
+        <div class="act-title"><b style="font-family:var(--mono);font-size:11px;color:var(--gold)">${a.method}</b> ${a.path}</div>
+        <div class="act-meta">${a.time} · ${a.ms}ms</div>
+      </div>
+      ${a.status ? `<span class="act-status ${a.status<300?'s2':a.status<500?'s4':'s5'}">${a.status}</span>` : '<span class="act-status s5">ERR</span>'}
+    </div>`).join('');
+}
+
+// ═══════════════════════════════════════════
+// ACCOUNTS
+// ═══════════════════════════════════════════
+async function acCreate() {
+  const name=v('ac-name'),email=v('ac-email'),mobile=v('ac-mobile');
+  if(!name||!email||!mobile){toast('⚠️ Fill all required fields','error');return;}
+  await api('POST','/eazybank/accounts/api/create',{name,email,mobileNumber:mobile},'ac-create-result');
+}
+async function acFetch() {
+  const mobile=v('ac-fetch-mobile');
+  if(!mobile){toast('⚠️ Enter mobile number','error');return;}
+  const d=await api('GET',`/eazybank/accounts/api/fetch?mobileNumber=${mobile}`,null,'ac-fetch-result');
+  renderAccount(d,'ac-fetch-display');
+}
+async function acUpdate() {
+  const mobile=v('ac-upd-mobile');
+  if(!mobile){toast('⚠️ Enter mobile number','error');return;}
+  await api('PUT','/eazybank/accounts/api/update',{
+    name:v('ac-upd-name'),email:v('ac-upd-email'),mobileNumber:mobile,
+    accountsDto:{accountNumber:parseInt(v('ac-upd-accno'))||0,accountType:v('ac-upd-type'),branchAddress:v('ac-upd-addr')}
+  },'ac-update-result');
+}
+async function acDelete() {
+  const mobile=v('ac-del-mobile');
+  if(!mobile){toast('⚠️ Enter mobile number','error');return;}
+  if(!confirm(`Delete account for mobile ${mobile}?`))return;
+  await api('DELETE',`/eazybank/accounts/api/delete?mobileNumber=${mobile}`,null,'ac-delete-result');
+}
+
+// ═══════════════════════════════════════════
+// LOANS
+// ═══════════════════════════════════════════
+async function lnCreate(){const m=v('ln-mobile');if(!m){toast('⚠️ Enter mobile','error');return;}await api('POST',`/eazybank/loans/api/create?mobileNumber=${m}`,null,'ln-create-result');}
+async function lnFetch(){const m=v('ln-fetch-mobile');if(!m){toast('⚠️ Enter mobile','error');return;}const d=await api('GET',`/eazybank/loans/api/fetch?mobileNumber=${m}`,null,'ln-fetch-result');renderLoan(d,'ln-fetch-display');}
+async function lnUpdate(){
+  const m=v('ln-upd-mobile'),n=v('ln-upd-num');
+  if(!m||!n){toast('⚠️ Enter mobile and loan number','error');return;}
+  await api('PUT','/eazybank/loans/api/update',{mobileNumber:m,loanNumber:n,loanType:v('ln-upd-type'),totalLoan:parseInt(v('ln-upd-total')),amountPaid:parseInt(v('ln-upd-paid')),outstandingAmount:parseInt(v('ln-upd-out'))},'ln-update-result');
+}
+async function lnDelete(){const m=v('ln-del-mobile');if(!m){toast('⚠️ Enter mobile','error');return;}if(!confirm(`Delete loan for ${m}?`))return;await api('DELETE',`/eazybank/loans/api/delete?mobileNumber=${m}`,null,'ln-delete-result');}
+
+// ═══════════════════════════════════════════
+// CARDS
+// ═══════════════════════════════════════════
+async function cdCreate(){const m=v('cd-mobile');if(!m){toast('⚠️ Enter mobile','error');return;}await api('POST',`/eazybank/cards/api/create?mobileNumber=${m}`,null,'cd-create-result');}
+async function cdFetch(){const m=v('cd-fetch-mobile');if(!m){toast('⚠️ Enter mobile','error');return;}const d=await api('GET',`/eazybank/cards/api/fetch?mobileNumber=${m}`,null,'cd-fetch-result');renderCard(d,'cd-fetch-display');}
+async function cdUpdate(){
+  const m=v('cd-upd-mobile'),n=v('cd-upd-num');
+  if(!m||!n){toast('⚠️ Enter mobile and card number','error');return;}
+  await api('PUT','/eazybank/cards/api/update',{mobileNumber:m,cardNumber:n,cardType:v('cd-upd-type'),totalLimit:parseInt(v('cd-upd-total')),amountUsed:parseInt(v('cd-upd-used')),availableAmount:parseInt(v('cd-upd-avail'))},'cd-update-result');
+}
+async function cdDelete(){const m=v('cd-del-mobile');if(!m){toast('⚠️ Enter mobile','error');return;}if(!confirm(`Delete card for ${m}?`))return;await api('DELETE',`/eazybank/cards/api/delete?mobileNumber=${m}`,null,'cd-del-result');}
+
+// ═══════════════════════════════════════════
+// CUSTOMER 360
+// ═══════════════════════════════════════════
+async function custFetch() {
+  const mobile=v('cust-mobile');
+  if(!mobile){toast('⚠️ Enter mobile number','error');return;}
+  const d=await api('GET',`/eazybank/accounts/api/fetchCustomerDetails?mobileNumber=${mobile}`,null,'cust-result',{'eazybank-correlation-id':'portal-'+Date.now()});
+  if(!d){document.getElementById('cust-display').innerHTML='';return;}
+  let html='';
+  if(d.name){
+    const initials=d.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    html+=`<div class="c360-profile">
+      <div class="c360-avatar">${initials}</div>
+      <div>
+        <div class="c360-name">${d.name}</div>
+        <div class="c360-details">
+          <span>📧 ${d.email||'—'}</span>
+          <span>📱 ${d.mobileNumber||'—'}</span>
+        </div>
+      </div>
+    </div>`;
+  }
+  const tmpA=document.createElement('div');document.body.appendChild(tmpA);renderAccount(d,tmpA.id='_a'+Date.now());html+=tmpA.innerHTML;document.body.removeChild(tmpA);
+  if(d.loansDto){const tmpL=document.createElement('div');document.body.appendChild(tmpL);renderLoan(d.loansDto,tmpL.id='_l'+Date.now());html+=tmpL.innerHTML;document.body.removeChild(tmpL);}
+  if(d.cardsDto){const tmpC=document.createElement('div');document.body.appendChild(tmpC);renderCard(d.cardsDto,tmpC.id='_c'+Date.now());html+=tmpC.innerHTML;document.body.removeChild(tmpC);}
+  document.getElementById('cust-display').innerHTML=html;
+}
+
+async function infoCall(path,resultEl){await api('GET',path,null,resultEl);}
+
+// ═══════════════════════════════════════════
+// RENDER HELPERS
+// ═══════════════════════════════════════════
+function renderAccount(d,elId) {
+  const el=document.getElementById(elId);
+  if(!d){el.innerHTML='';return;}
+  const a=d.accountsDto||d;
+  el.innerHTML=`<div class="bank-card">
+    <div class="bank-card-header">
+      <div class="bch-name">${d.name||'Account Holder'}</div>
+      <div class="bch-meta">
+        <span>📧 ${d.email||'—'}</span>
+        <span>📱 ${d.mobileNumber||'—'}</span>
+        <span class="bch-badge">${a.accountType||'Account'}</span>
+      </div>
+    </div>
+    <div class="bank-card-body">
+      <div class="detail-grid">
+        <div class="detail-item"><div class="di-label">Account Number</div><div class="di-val">${a.accountNumber||'—'}</div></div>
+        <div class="detail-item"><div class="di-label">Account Type</div><div class="di-val">${a.accountType||'—'}</div></div>
+        <div class="detail-item full"><div class="di-label">Branch Address</div><div class="di-val">${a.branchAddress||'—'}</div></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderLoan(d,elId) {
+  const el=document.getElementById(elId);
+  if(!d){el.innerHTML='';return;}
+  const pct=d.totalLoan?Math.min(100,Math.round((d.amountPaid/d.totalLoan)*100)):0;
+  const color=pct>75?'var(--green)':pct>40?'var(--amber)':'var(--blue)';
+  el.innerHTML=`<div class="fin-card">
+    <div class="fin-card-header">
+      <div><div class="fch-type">${d.loanType||'Loan'}</div><div class="fch-num">Loan # ${d.loanNumber||'—'}</div></div>
+      <span style="font-size:11px;padding:4px 10px;border-radius:20px;background:var(--bluedim);color:var(--blue);font-family:var(--mono)">${pct}% repaid</span>
+    </div>
+    <div class="fin-card-body">
+      <div class="progress-wrap">
+        <div class="progress-label-row"><span>Repayment Progress</span><b>${pct}%</b></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;background:${color}"></div></div>
+      </div>
+      <div class="amount-row">
+        <div class="amount-item"><div class="ai-label">Total Loan</div><div class="ai-val gold">₹${fmt(d.totalLoan)}</div></div>
+        <div class="amount-item"><div class="ai-label">Amount Paid</div><div class="ai-val green">₹${fmt(d.amountPaid)}</div></div>
+        <div class="amount-item"><div class="ai-label">Outstanding</div><div class="ai-val red">₹${fmt(d.outstandingAmount)}</div></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderCard(d,elId) {
+  const el=document.getElementById(elId);
+  if(!d){el.innerHTML='';return;}
+  const pct=d.totalLimit?Math.min(100,Math.round((d.amountUsed/d.totalLimit)*100)):0;
+  const color=pct>80?'var(--red)':pct>50?'var(--amber)':'var(--green)';
+  el.innerHTML=`<div class="fin-card">
+    <div class="fin-card-header">
+      <div><div class="fch-type">${d.cardType||'Card'}</div><div class="fch-num">**** **** **** ${(d.cardNumber||'0000').slice(-4)}</div></div>
+      <span style="font-size:11px;padding:4px 10px;border-radius:20px;background:${pct>80?'var(--reddim)':pct>50?'var(--amberdim)':'var(--greendim)'};color:${color};font-family:var(--mono)">${pct}% used</span>
+    </div>
+    <div class="fin-card-body">
+      <div class="progress-wrap">
+        <div class="progress-label-row"><span>Credit Utilization</span><b>${pct}%</b></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;background:${color}"></div></div>
+      </div>
+      <div class="amount-row">
+        <div class="amount-item"><div class="ai-label">Credit Limit</div><div class="ai-val gold">₹${fmt(d.totalLimit)}</div></div>
+        <div class="amount-item"><div class="ai-label">Amount Used</div><div class="ai-val red">₹${fmt(d.amountUsed)}</div></div>
+        <div class="amount-item"><div class="ai-label">Available</div><div class="ai-val green">₹${fmt(d.availableAmount)}</div></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════
+// NAVIGATION
+// ═══════════════════════════════════════════
+function nav(id,el) {
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.ni').forEach(n=>n.classList.remove('on'));
+  document.getElementById('page-'+id).classList.add('on');
+  el.classList.add('on');
+}
+function switchTab(prefix,id,el) {
+  document.querySelectorAll('[id^="'+prefix+'-"]').forEach(t=>t.classList.remove('on'));
+  document.getElementById(prefix+'-'+id).classList.add('on');
+  el.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
+  el.classList.add('on');
+}
+function filterNav(q) {
+  document.querySelectorAll('.ni[data-label]').forEach(ni=>{
+    ni.style.display=ni.dataset.label.includes(q.toLowerCase())?'':'none';
+  });
+}
+
+// ═══════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════
+function v(id){const el=document.getElementById(id);return el?el.value.trim():'';}
+function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function fmt(n){return n?Number(n).toLocaleString('en-IN'):'0';}
+function fillAcDemo(){
+  document.getElementById('ac-name').value='Sree Kumar';
+  document.getElementById('ac-email').value='sree@eazybytes.com';
+  document.getElementById('ac-mobile').value='9876543210';
+}
+function toast(msg,type='info') {
+  const c=document.getElementById('toast-container');
+  const t=document.createElement('div');
+  t.className='toast '+type;t.textContent=msg;
+  c.appendChild(t);
+  setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300);},3200);
+}
+</script>
+</body>
+</html>
