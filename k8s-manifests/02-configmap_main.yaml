@@ -1,0 +1,195 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank Frontend — ConfigMaps
+#
+#  Three ConfigMaps:
+#    1. eazybank-nginx-config    → nginx.conf (main nginx config)
+#    2. eazybank-frontend-config → config.js  (runtime JS config)
+#
+#  The third (eazybank-filebeat-config) is in 10-filebeat-configmap.yaml
+#
+#  IMPORTANT: The deployment's checksum annotation triggers Reloader:
+#    configmap.reloader.stakater.com/reload: "eazybank-nginx-config,eazybank-frontend-config"
+#  Any change here → automatic rolling restart of the deployment.
+# ─────────────────────────────────────────────────────────────────
+
+# ── 1. Nginx main config ──────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eazybank-nginx-config
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: config
+data:
+  nginx.conf: |
+    # ── Worker processes ──────────────────────────────────────────
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid       /tmp/nginx.pid;          # writable by non-root uid=101
+
+    events {
+      worker_connections 1024;
+      multi_accept on;
+      use epoll;
+    }
+
+    http {
+      # ── MIME types ──────────────────────────────────────────────
+      include      /etc/nginx/mime.types;
+      default_type application/octet-stream;
+
+      # ── Security — hide version ──────────────────────────────────
+      server_tokens off;
+
+      # ── Temp paths writable by non-root ─────────────────────────
+      client_body_temp_path /tmp/client_temp;
+      proxy_temp_path       /tmp/proxy_temp_path;
+      fastcgi_temp_path     /tmp/fastcgi_temp;
+      uwsgi_temp_path       /tmp/uwsgi_temp;
+      scgi_temp_path        /tmp/scgi_temp;
+
+      # ── JSON structured access log ───────────────────────────────
+      log_format json_combined escape=json
+        '{'
+          '"time":"$time_iso8601",'
+          '"remote_addr":"$remote_addr",'
+          '"method":"$request_method",'
+          '"uri":"$request_uri",'
+          '"status":$status,'
+          '"bytes_sent":$bytes_sent,'
+          '"request_time":$request_time,'
+          '"http_referer":"$http_referer",'
+          '"http_user_agent":"$http_user_agent",'
+          '"request_id":"$request_id"'
+        '}';
+
+      access_log /var/log/nginx/access.log json_combined;
+
+      # ── Performance ──────────────────────────────────────────────
+      sendfile        on;
+      tcp_nopush      on;
+      tcp_nodelay     on;
+      keepalive_timeout 65;
+      types_hash_max_size 2048;
+      client_max_body_size 10m;
+
+      # ── Gzip compression ─────────────────────────────────────────
+      gzip on;
+      gzip_vary on;
+      gzip_proxied any;
+      gzip_comp_level 6;
+      gzip_min_length 1000;
+      gzip_types
+        text/plain
+        text/css
+        text/javascript
+        application/javascript
+        application/json
+        application/xml
+        image/svg+xml;
+
+      # ── Rate limiting zones ──────────────────────────────────────
+      limit_req_zone  $binary_remote_addr zone=perip:10m   rate=20r/s;
+      limit_conn_zone $binary_remote_addr zone=perconn:10m;
+
+      server {
+        listen 80;
+        server_name _;
+
+        root  /usr/share/nginx/html;
+        index index.html;
+
+        # ── Request ID ────────────────────────────────────────────
+        add_header X-Request-ID $request_id always;
+
+        # ── Rate limit ────────────────────────────────────────────
+        limit_req  zone=perip nodelay burst=40;
+        limit_conn perconn 20;
+
+        # ── Health endpoints (no rate limit, no auth) ─────────────
+        location = /healthz {
+          access_log off;
+          return 200 "healthy\n";
+          add_header Content-Type text/plain;
+        }
+
+        location = /readyz {
+          access_log off;
+          return 200 "ready\n";
+          add_header Content-Type text/plain;
+        }
+
+        # ── Nginx stub status (for nginx-prometheus-exporter) ──────
+        location = /stub_status {
+          stub_status;
+          access_log off;
+          # Only allow localhost (sidecar exporter)
+          allow 127.0.0.1;
+          deny all;
+        }
+
+        # ── Static assets — aggressive caching ────────────────────
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+          expires 1y;
+          add_header Cache-Control "public, immutable";
+          add_header X-Content-Type-Options nosniff;
+          try_files $uri =404;
+        }
+
+        # ── Runtime config.js — no cache (changes per env) ────────
+        location = /config.js {
+          alias /etc/nginx/conf.d/config.js;
+          add_header Cache-Control "no-store, no-cache, must-revalidate";
+          add_header Pragma no-cache;
+        }
+
+        # ── SPA fallback — React/Vue/Angular routing ───────────────
+        location / {
+          try_files $uri $uri/ /index.html;
+          add_header X-Frame-Options       SAMEORIGIN;
+          add_header X-Content-Type-Options nosniff;
+          add_header Referrer-Policy       strict-origin-when-cross-origin;
+        }
+
+        # ── Block hidden files (.git, .env, etc.) ─────────────────
+        location ~ /\. {
+          deny all;
+          access_log off;
+          log_not_found off;
+        }
+
+        # ── Error pages ───────────────────────────────────────────
+        error_page 404              /index.html;
+        error_page 500 502 503 504  /index.html;
+      }
+    }
+
+---
+# ── 2. Runtime JS config — injected per environment ───────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eazybank-frontend-config
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: config
+data:
+  config.js: |
+    // Runtime configuration injected via ConfigMap.
+    // Consumed by: window.APP_CONFIG in the SPA.
+    // Change values here → Reloader triggers rolling restart automatically.
+    window.APP_CONFIG = {
+      API_GATEWAY_URL:  "http://gatewayserver.eazybank.svc.cluster.local:8072",
+      KEYCLOAK_URL:     "http://keycloak.eazybank.svc.cluster.local",
+      KEYCLOAK_REALM:   "eazybank",
+      KEYCLOAK_CLIENT:  "eazybank-frontend",
+      ENVIRONMENT:      "production",
+      VERSION:          "2.0.0",
+      FEATURE_FLAGS: {
+        ENABLE_DARK_MODE:   true,
+        ENABLE_ANALYTICS:   false,
+        ENABLE_CHATBOT:     false
+      }
+    };

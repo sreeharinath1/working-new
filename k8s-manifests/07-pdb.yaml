@@ -1,0 +1,30 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank Frontend — PodDisruptionBudget
+#
+#  Guarantees at least 2 pods remain available during:
+#    - Node drains (kubectl drain)
+#    - Cluster upgrades
+#    - AZ maintenance
+#
+#  With minReplicas=3 in HPA, minAvailable=2 means:
+#    - 1 pod can be disrupted at a time
+#    - Never drops below 2 running pods during voluntary disruptions
+#
+#  NOTE: PDB does NOT protect against involuntary disruptions
+#  (node crash, OOM kill). Use topology spread + anti-affinity for that.
+# ─────────────────────────────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: eazybank-frontend-pdb
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: frontend
+spec:
+  # Minimum pods that must remain available during disruption
+  minAvailable: 2
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: eazybank-frontend

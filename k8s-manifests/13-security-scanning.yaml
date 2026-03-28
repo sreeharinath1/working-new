@@ -1,0 +1,111 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank Frontend — Security Scanning
+#  Trivy: container image + filesystem scanning
+#  Snyk:  dependency vulnerability scanning
+#
+#  Run as K8s CronJob or in CI pipeline
+# ─────────────────────────────────────────────────────────────────
+
+# ── Trivy scan CronJob (weekly image re-scan) ─────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: eazybank-trivy-scan
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-trivy-scan
+    app.kubernetes.io/component: security
+spec:
+  schedule: "0 2 * * 0"   # Every Sunday at 2 AM
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: trivy-scan
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: eazybank-frontend-sa
+          containers:
+            - name: trivy
+              image: aquasec/trivy:latest
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  echo "=== Trivy Image Scan ==="
+                  trivy image \
+                    --exit-code 0 \
+                    --severity HIGH,CRITICAL \
+                    --format json \
+                    --output /reports/trivy-image-$(date +%Y%m%d).json \
+                    eazybytes/eazybank-frontend:latest
+
+                  echo "=== Trivy Config Scan ==="
+                  trivy config \
+                    --exit-code 0 \
+                    --severity HIGH,CRITICAL \
+                    --format json \
+                    --output /reports/trivy-config-$(date +%Y%m%d).json \
+                    /k8s-configs || true
+
+                  echo "=== Trivy Filesystem Scan ==="
+                  trivy fs \
+                    --exit-code 0 \
+                    --severity HIGH,CRITICAL \
+                    --format json \
+                    --output /reports/trivy-fs-$(date +%Y%m%d).json \
+                    /scan-target || true
+
+                  # Alert on CRITICAL findings
+                  CRITICALS=$(trivy image \
+                    --exit-code 0 \
+                    --severity CRITICAL \
+                    --format json \
+                    eazybytes/eazybank-frontend:latest | \
+                    grep -c '"Severity":"CRITICAL"' || echo 0)
+
+                  echo "Critical vulnerabilities found: $CRITICALS"
+                  if [ "$CRITICALS" -gt 0 ]; then
+                    echo "ACTION REQUIRED: Critical vulnerabilities detected!"
+                    # Send alert (webhook/slack notification)
+                    curl -sf -X POST "${SLACK_WEBHOOK_URL}" \
+                      -H 'Content-type: application/json' \
+                      -d "{\"text\":\"⚠️ EazyBank Frontend: $CRITICALS CRITICAL vulnerabilities found! Check /reports/\"}" || true
+                  fi
+              env:
+                - name: SLACK_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: eazybank-frontend-secrets
+                      key: SLACK_WEBHOOK_URL
+                      optional: true
+                - name: TRIVY_NO_PROGRESS
+                  value: "true"
+              volumeMounts:
+                - name: reports
+                  mountPath: /reports
+              resources:
+                requests:
+                  cpu: "200m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+          volumes:
+            - name: reports
+              emptyDir: {}
+---
+# ── Trivy Operator (continuous scanning) ─────────────────────────
+# Install: helm install trivy-operator aquasecurity/trivy-operator \
+#   --namespace trivy-system --create-namespace \
+#   --set="trivy.ignoreUnfixed=true"
+#
+# VulnerabilityReport CR (auto-created by Trivy Operator)
+# apiVersion: aquasecurity.github.io/v1alpha1
+# kind: VulnerabilityReport
+# → Check with: kubectl get vulnerabilityreports -n eazybank

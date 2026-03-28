@@ -1,0 +1,180 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank Frontend — Prometheus ServiceMonitor + Alerting Rules
+#  Requires: kube-prometheus-stack (prometheus-operator) installed
+# ─────────────────────────────────────────────────────────────────
+
+# ── ServiceMonitor (tells Prometheus how to scrape) ───────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: eazybank-frontend-monitor
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: monitoring
+    # Must match prometheus-operator's serviceMonitorSelector label
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: eazybank-frontend
+  endpoints:
+    - port: metrics          # nginx-prometheus-exporter port
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      honorLabels: true
+  namespaceSelector:
+    matchNames:
+      - eazybank
+---
+# ── PrometheusRule (alerting rules) ──────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: eazybank-frontend-alerts
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    release: kube-prometheus-stack
+    role: alert-rules
+spec:
+  groups:
+    - name: eazybank-frontend.availability
+      interval: 30s
+      rules:
+
+        # ── Pod availability ──────────────────────────────────────
+        - alert: EazyBankFrontendDown
+          expr: |
+            kube_deployment_status_replicas_available{
+              deployment="eazybank-frontend",
+              namespace="eazybank"
+            } == 0
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "EazyBank Frontend is completely down"
+            description: "All frontend pods are unavailable in namespace {{ $labels.namespace }}"
+            runbook_url: "https://wiki.eazybytes.com/runbooks/frontend-down"
+
+        - alert: EazyBankFrontendDegraded
+          expr: |
+            (kube_deployment_spec_replicas{deployment="eazybank-frontend",namespace="eazybank"}
+            - kube_deployment_status_replicas_available{deployment="eazybank-frontend",namespace="eazybank"})
+            > 1
+          for: 3m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "EazyBank Frontend has reduced capacity"
+            description: "{{ $value }} replica(s) unavailable for 3+ minutes"
+
+        # ── High error rate ───────────────────────────────────────
+        - alert: EazyBankFrontendHighErrorRate
+          expr: |
+            rate(nginx_http_requests_total{status=~"5..",job="eazybank-frontend"}[5m])
+            / rate(nginx_http_requests_total{job="eazybank-frontend"}[5m]) > 0.05
+          for: 2m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "High 5xx error rate on EazyBank frontend"
+            description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes"
+
+        # ── High latency ──────────────────────────────────────────
+        - alert: EazyBankFrontendHighLatency
+          expr: |
+            histogram_quantile(0.95,
+              rate(nginx_http_request_duration_seconds_bucket{job="eazybank-frontend"}[5m])
+            ) > 2
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "EazyBank frontend P95 latency > 2s"
+            description: "P95 response time is {{ $value | humanizeDuration }}"
+
+        # ── HPA at max capacity ───────────────────────────────────
+        - alert: EazyBankFrontendHPAMaxed
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{
+              horizontalpodautoscaler="eazybank-frontend-hpa",
+              namespace="eazybank"
+            }
+            >= kube_horizontalpodautoscaler_spec_max_replicas{
+              horizontalpodautoscaler="eazybank-frontend-hpa",
+              namespace="eazybank"
+            }
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "EazyBank frontend HPA at maximum replicas"
+            description: "HPA has scaled to max ({{ $value }}) — consider raising maxReplicas"
+
+        # ── CPU throttling ────────────────────────────────────────
+        - alert: EazyBankFrontendCPUThrottled
+          expr: |
+            rate(container_cpu_cfs_throttled_seconds_total{
+              container="nginx",
+              namespace="eazybank"
+            }[5m]) > 0.25
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "EazyBank frontend nginx container CPU throttled"
+            description: "CPU throttling rate is {{ $value | humanizePercentage }}"
+
+        # ── Memory pressure ───────────────────────────────────────
+        - alert: EazyBankFrontendHighMemory
+          expr: |
+            container_memory_working_set_bytes{
+              container="nginx",
+              namespace="eazybank"
+            } / container_spec_memory_limit_bytes{
+              container="nginx",
+              namespace="eazybank"
+            } > 0.85
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "EazyBank frontend memory usage > 85% of limit"
+            description: "Memory usage is {{ $value | humanizePercentage }} of limit"
+
+    - name: eazybank-frontend.nginx
+      interval: 30s
+      rules:
+        # ── Nginx connections saturated ───────────────────────────
+        - alert: NginxConnectionsSaturated
+          expr: |
+            nginx_connections_active{job="eazybank-frontend"} > 800
+          for: 2m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Nginx active connections high"
+            description: "{{ $value }} active connections (limit ~1024 per worker)"
+
+        # ── Rate limit triggered frequently ───────────────────────
+        - alert: NginxRateLimitHit
+          expr: |
+            rate(nginx_http_requests_total{status="429",job="eazybank-frontend"}[5m]) > 5
+          for: 2m
+          labels:
+            severity: info
+            team: platform
+          annotations:
+            summary: "Nginx rate limiting is frequently triggered"
+            description: "{{ $value }} rate-limited requests/s — possible scraper/DDoS"

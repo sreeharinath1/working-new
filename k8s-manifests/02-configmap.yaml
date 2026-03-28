@@ -1,0 +1,106 @@
+# ── 1. Nginx main config ──────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eazybank-nginx-config
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: config
+data:
+  nginx.conf: |
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid       /tmp/nginx.pid;
+
+    events {
+      worker_connections 1024;
+      multi_accept on;
+      use epoll;
+    }
+
+    http {
+      include       /etc/nginx/mime.types;
+      default_type application/octet-stream;
+      server_tokens off;
+
+      # Temp paths for non-root execution
+      client_body_temp_path /tmp/client_temp;
+      proxy_temp_path       /tmp/proxy_temp_path;
+      fastcgi_temp_path     /tmp/fastcgi_temp;
+      uwsgi_temp_path       /tmp/uwsgi_temp;
+      scgi_temp_path        /tmp/scgi_temp;
+
+      # K8s DNS Resolver - Prevents startup crash if backends are missing
+      resolver 10.96.0.10 valid=30s;
+
+      log_format json_combined escape=json
+        '{'
+          '"time":"$time_iso8601",'
+          '"remote_addr":"$remote_addr",'
+          '"status":$status,'
+          '"request_id":"$request_id"'
+        '}';
+
+      access_log /var/log/nginx/access.log json_combined;
+
+      server {
+        listen 80;
+        server_name _;
+
+        root  /usr/share/nginx/html;
+        index index.html;
+
+        # ── Health endpoints ──────────────────────────────────────
+        location = /healthz {
+          access_log off;
+          return 200 "healthy\n";
+        }
+
+        location = /readyz {
+          access_log off;
+          return 200 "ready\n";
+        }
+
+        # ── Nginx stub status ─────────────────────────────────────
+        location = /stub_status {
+          stub_status;
+          access_log off;
+          allow 127.0.0.1;
+          deny all;
+        }
+
+        # ── SPA fallback ──────────────────────────────────────────
+        location / {
+          try_files $uri $uri/ /index.html;
+        }
+
+        # ── Runtime config.js ─────────────────────────────────────
+        location = /config.js {
+          alias /etc/nginx/conf.d/config.js;
+          add_header Cache-Control "no-store, no-cache, must-revalidate";
+        }
+
+        # ── Optional: API Proxy (Safe Mode) ───────────────────────
+        # If you decide to proxy via Nginx instead of browser-direct:
+        location /api/ {
+           set $gateway "http://gatewayserver.eazybank.svc.cluster.local:8072";
+           proxy_pass $gateway;
+        }
+      }
+    }
+
+---
+# ── 2. Runtime JS config ──────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eazybank-frontend-config
+  namespace: eazybank
+data:
+  config.js: |
+    window.APP_CONFIG = {
+      API_GATEWAY_URL:  "http://gatewayserver.eazybank.svc.cluster.local:8072",
+      ENVIRONMENT:      "production",
+      VERSION:          "2.0.0"
+    };

@@ -1,0 +1,92 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank Frontend — NetworkPolicy
+#  Default-deny all, then allow only what's needed
+# ─────────────────────────────────────────────────────────────────
+
+# ── Default deny all ingress + egress in namespace ────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: eazybank
+spec:
+  podSelector: {}    # applies to ALL pods in namespace
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# ── Allow frontend ingress from ingress controller ────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: eazybank-frontend-ingress-policy
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: eazybank-frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From ingress-nginx controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80
+    # From Prometheus scraper (monitoring namespace)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9113   # metrics
+    # From direct NodePort access (any node)
+    - ports:
+        - protocol: TCP
+          port: 80
+  egress:
+    # To API gateway
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gatewayserver
+      ports:
+        - protocol: TCP
+          port: 8072
+    # To Keycloak
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: keycloak
+      ports:
+        - protocol: TCP
+          port: 80
+    # To Logstash (Filebeat sidecar output)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 5044   # Beats input
+    # DNS resolution (kube-dns)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # External HTTPS (fonts, CDN)
+    - ports:
+        - protocol: TCP
+          port: 443

@@ -1,0 +1,234 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank — Grafana + Dashboard ConfigMap
+#  Namespace: monitoring
+#
+#  Includes:
+#    - Grafana Deployment + Service (NodePort 30300)
+#    - ConfigMap with pre-built EazyBank nginx dashboard JSON
+#    - ConfigMap for Grafana datasource (auto-connects Prometheus)
+#    - ConfigMap for dashboard provisioning config
+#
+#  Access: http://<ec2-ip>:30300
+#  Default creds: admin / admin  (change immediately via env secret)
+# ─────────────────────────────────────────────────────────────────
+
+# ── Grafana datasource — auto-connects to Prometheus ─────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+  labels:
+    app: grafana
+data:
+  prometheus.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+        isDefault: true
+        editable: false
+---
+# ── Grafana dashboard provisioning config ─────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-providers
+  namespace: monitoring
+  labels:
+    app: grafana
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: eazybank
+        orgId: 1
+        folder: EazyBank
+        type: file
+        disableDeletion: true
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/eazybank
+---
+# ── EazyBank nginx dashboard JSON ─────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-eazybank
+  namespace: monitoring
+  labels:
+    app: grafana
+    grafana_dashboard: "1"
+data:
+  eazybank-nginx.json: |
+    {
+      "title": "EazyBank Frontend — Nginx",
+      "uid": "eazybank-nginx",
+      "tags": ["eazybank", "nginx", "frontend"],
+      "timezone": "browser",
+      "refresh": "30s",
+      "schemaVersion": 38,
+      "panels": [
+        {
+          "id": 1, "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+          "type": "stat", "title": "Pods available",
+          "targets": [{"expr": "kube_deployment_status_replicas_available{deployment=\"eazybank-frontend\",namespace=\"eazybank\"}","legendFormat": "available"}],
+          "fieldConfig": {"defaults": {"thresholds": {"steps": [{"color":"red","value":0},{"color":"yellow","value":1},{"color":"green","value":3}]}}}
+        },
+        {
+          "id": 2, "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+          "type": "stat", "title": "Requests / sec",
+          "targets": [{"expr": "sum(rate(nginx_http_requests_total{job=\"eazybank-frontend\"}[2m]))","legendFormat": "rps"}]
+        },
+        {
+          "id": 3, "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+          "type": "stat", "title": "5xx error rate",
+          "targets": [{"expr": "sum(rate(nginx_http_requests_total{status=~\"5..\",job=\"eazybank-frontend\"}[5m])) / sum(rate(nginx_http_requests_total{job=\"eazybank-frontend\"}[5m]))","legendFormat": "error rate"}],
+          "fieldConfig": {"defaults": {"unit": "percentunit","thresholds": {"steps": [{"color":"green","value":0},{"color":"yellow","value":0.01},{"color":"red","value":0.05}]}}}
+        },
+        {
+          "id": 4, "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+          "type": "stat", "title": "P95 latency",
+          "targets": [{"expr": "histogram_quantile(0.95, sum(rate(nginx_http_request_duration_seconds_bucket{job=\"eazybank-frontend\"}[5m])) by (le))","legendFormat": "p95"}],
+          "fieldConfig": {"defaults": {"unit": "s","thresholds": {"steps": [{"color":"green","value":0},{"color":"yellow","value":0.5},{"color":"red","value":2}]}}}
+        },
+        {
+          "id": 5, "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+          "type": "stat", "title": "Active connections",
+          "targets": [{"expr": "sum(nginx_connections_active{job=\"eazybank-frontend\"})","legendFormat": "active"}],
+          "fieldConfig": {"defaults": {"thresholds": {"steps": [{"color":"green","value":0},{"color":"yellow","value":500},{"color":"red","value":800}]}}}
+        },
+        {
+          "id": 6, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "type": "timeseries", "title": "Request rate by status code",
+          "targets": [
+            {"expr": "sum by (status) (rate(nginx_http_requests_total{job=\"eazybank-frontend\"}[2m]))","legendFormat": "{{status}}"}
+          ]
+        },
+        {
+          "id": 7, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "type": "timeseries", "title": "CPU usage per container",
+          "targets": [
+            {"expr": "rate(container_cpu_usage_seconds_total{namespace=\"eazybank\",pod=~\"eazybank-frontend.*\"}[2m])","legendFormat": "{{container}}"}
+          ]
+        },
+        {
+          "id": 8, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "type": "timeseries", "title": "Memory usage per container",
+          "targets": [
+            {"expr": "container_memory_working_set_bytes{namespace=\"eazybank\",pod=~\"eazybank-frontend.*\"}","legendFormat": "{{container}}"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "bytes"}}
+        },
+        {
+          "id": 9, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "type": "timeseries", "title": "HPA replica count",
+          "targets": [
+            {"expr": "kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler=\"eazybank-frontend-hpa\",namespace=\"eazybank\"}","legendFormat": "current"},
+            {"expr": "kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler=\"eazybank-frontend-hpa\",namespace=\"eazybank\"}","legendFormat": "max"},
+            {"expr": "kube_horizontalpodautoscaler_spec_min_replicas{horizontalpodautoscaler=\"eazybank-frontend-hpa\",namespace=\"eazybank\"}","legendFormat": "min"}
+          ]
+        }
+      ]
+    }
+---
+# ── Grafana Deployment ─────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472          # grafana uid
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:10.3.1
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: "admin"
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: "eazybank-change-me"   # ← move to SealedSecret in prod
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+            - name: GF_SERVER_ROOT_URL
+              value: "http://localhost:3000"
+            - name: GF_ANALYTICS_REPORTING_ENABLED
+              value: "false"
+            - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
+              value: "/var/lib/grafana/dashboards/eazybank/eazybank-nginx.json"
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-providers
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards/eazybank
+            - name: storage
+              mountPath: /var/lib/grafana
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "256Mi"
+            limits:
+              cpu:    "300m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-providers
+          configMap:
+            name: grafana-dashboard-providers
+        - name: dashboards
+          configMap:
+            name: grafana-dashboard-eazybank
+        - name: storage
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: grafana
+spec:
+  type: NodePort
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30300    # access: http://<ec2-ip>:30300

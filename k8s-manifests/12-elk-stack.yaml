@@ -1,0 +1,372 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank — ELK Stack in K8s (monitoring namespace)
+#  Logstash + Elasticsearch + Kibana
+# ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    kubernetes.io/metadata.name: monitoring
+---
+# ── Logstash ConfigMap (pipeline) ────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-pipeline
+  namespace: monitoring
+data:
+  nginx.conf: |
+    input {
+      beats {
+        port => 5044
+        type => "nginx"
+      }
+    }
+
+    filter {
+      if [fields][log_type] == "access" {
+        # Parse JSON nginx access log
+        json {
+          source => "message"
+          target => "nginx"
+          skip_on_invalid_json => true
+        }
+
+        # Parse timestamp
+        date {
+          match => ["[nginx][time]", "ISO8601"]
+          target => "@timestamp"
+        }
+
+        # GeoIP enrichment (if Maxmind DB available)
+        # geoip {
+        #   source => "[nginx][remote_addr]"
+        #   target => "[nginx][geoip]"
+        # }
+
+        # Classify response codes
+        if [nginx][status] {
+          if [nginx][status] >= 500 {
+            mutate { add_field => { "[nginx][status_class]" => "5xx_error" } }
+          } else if [nginx][status] >= 400 {
+            mutate { add_field => { "[nginx][status_class]" => "4xx_client_error" } }
+          } else if [nginx][status] >= 300 {
+            mutate { add_field => { "[nginx][status_class]" => "3xx_redirect" } }
+          } else {
+            mutate { add_field => { "[nginx][status_class]" => "2xx_success" } }
+          }
+        }
+
+        # Convert numeric fields
+        mutate {
+          convert => {
+            "[nginx][status]"          => "integer"
+            "[nginx][bytes_sent]"      => "integer"
+            "[nginx][request_time]"    => "float"
+          }
+        }
+      }
+
+      if [fields][log_type] == "error" {
+        grok {
+          match => {
+            "message" => "%{DATA:nginx.time} \[%{DATA:nginx.level}\] %{GREEDYDATA:nginx.message}"
+          }
+        }
+      }
+
+      # Add index prefix field
+      mutate {
+        add_field => {
+          "[@metadata][index_prefix]" => "eazybank-nginx"
+        }
+      }
+    }
+
+    output {
+      elasticsearch {
+        hosts         => ["elasticsearch.monitoring.svc.cluster.local:9200"]
+        index         => "eazybank-nginx-%{[fields][log_type]}-%{+YYYY.MM.dd}"
+        template_name => "eazybank-nginx"
+        template_overwrite => false
+      }
+
+      # Debug: stdout (disable in production)
+      # stdout { codec => rubydebug }
+    }
+
+  logstash.yml: |
+    http.host: "0.0.0.0"
+    xpack.monitoring.enabled: false
+    pipeline.workers: 2
+    pipeline.batch.size: 500
+    pipeline.batch.delay: 50
+---
+# ── Logstash Deployment ───────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logstash
+  namespace: monitoring
+  labels:
+    app: logstash
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: logstash
+  template:
+    metadata:
+      labels:
+        app: logstash
+    spec:
+      containers:
+        - name: logstash
+          image: docker.elastic.co/logstash/logstash:8.11.3
+          ports:
+            - containerPort: 5044
+              name: beats
+            - containerPort: 9600
+              name: monitoring
+          env:
+            - name: LS_JAVA_OPTS
+              value: "-Xms256m -Xmx512m"
+          volumeMounts:
+            - name: pipeline
+              mountPath: /usr/share/logstash/pipeline
+            - name: config
+              mountPath: /usr/share/logstash/config/logstash.yml
+              subPath: logstash.yml
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "768Mi"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 9600
+            initialDelaySeconds: 60
+            periodSeconds: 30
+      volumes:
+        - name: pipeline
+          configMap:
+            name: logstash-pipeline
+            items:
+              - key: nginx.conf
+                path: nginx.conf
+        - name: config
+          configMap:
+            name: logstash-pipeline
+            items:
+              - key: logstash.yml
+                path: logstash.yml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: logstash
+  namespace: monitoring
+spec:
+  selector:
+    app: logstash
+  ports:
+    - name: beats
+      port: 5044
+      targetPort: 5044
+---
+# ── Elasticsearch StatefulSet ─────────────────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: monitoring
+  labels:
+    app: elasticsearch
+spec:
+  serviceName: elasticsearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+    spec:
+      initContainers:
+        - name: fix-permissions
+          image: busybox:1.35
+          command: ["sh", "-c", "chown -R 1000:1000 /usr/share/elasticsearch/data"]
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+        - name: increase-vm-max-map
+          image: busybox:1.35
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
+          securityContext:
+            privileged: true
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:8.11.3
+          ports:
+            - containerPort: 9200
+              name: http
+            - containerPort: 9300
+              name: transport
+          env:
+            - name: discovery.type
+              value: single-node
+            - name: xpack.security.enabled
+              value: "false"
+            - name: ES_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+            - name: cluster.name
+              value: eazybank-logs
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "1"
+              memory: "1.5Gi"
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            initialDelaySeconds: 30
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: monitoring
+spec:
+  selector:
+    app: elasticsearch
+  ports:
+    - name: http
+      port: 9200
+      targetPort: 9200
+---
+# ── Kibana Deployment ─────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+  namespace: monitoring
+  labels:
+    app: kibana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kibana
+  template:
+    metadata:
+      labels:
+        app: kibana
+    spec:
+      containers:
+        - name: kibana
+          image: docker.elastic.co/kibana/kibana:8.11.3
+          ports:
+            - containerPort: 5601
+              name: http
+          env:
+            - name: ELASTICSEARCH_HOSTS
+              value: http://elasticsearch.monitoring.svc.cluster.local:9200
+            - name: SERVER_NAME
+              value: eazybank-kibana
+            - name: XPACK_SECURITY_ENABLED
+              value: "false"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 5601
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  namespace: monitoring
+spec:
+  type: NodePort
+  selector:
+    app: kibana
+  ports:
+    - name: http
+      port: 5601
+      targetPort: 5601
+      nodePort: 30601    # access: http://<ec2-ip>:30601
+---
+# ── Kibana Index Pattern Job (auto-create index pattern) ──────────
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kibana-setup
+  namespace: monitoring
+  labels:
+    app: kibana-setup
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-kibana
+          image: curlimages/curl:8.5.0
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf http://kibana.monitoring.svc.cluster.local:5601/api/status; do
+                echo "Waiting for Kibana..."
+                sleep 10
+              done
+      containers:
+        - name: setup
+          image: curlimages/curl:8.5.0
+          command:
+            - sh
+            - -c
+            - |
+              # Create index pattern for nginx access logs
+              curl -X POST \
+                "http://kibana.monitoring.svc.cluster.local:5601/api/data_views/data_view" \
+                -H "Content-Type: application/json" \
+                -H "kbn-xsrf: true" \
+                -d '{
+                  "data_view": {
+                    "title": "eazybank-nginx-*",
+                    "timeFieldName": "@timestamp",
+                    "name": "EazyBank Nginx Logs"
+                  }
+                }' || true
+
+              echo "Kibana setup complete"

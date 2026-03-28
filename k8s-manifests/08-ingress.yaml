@@ -1,0 +1,101 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank Frontend — Ingress
+#
+#  Prerequisites (install via Helm before applying):
+#    1. ingress-nginx:
+#       helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+#         --namespace ingress-nginx --create-namespace
+#
+#    2. cert-manager:
+#       helm upgrade --install cert-manager jetstack/cert-manager \
+#         --namespace cert-manager --create-namespace \
+#         --set installCRDs=true
+#
+#    3. ClusterIssuer (letsencrypt-prod) — see 14-argocd-app.yaml
+#       or apply separately from infra/cert-manager-issuer.yaml
+#
+#  Replace eazybank.example.com with your actual domain everywhere.
+# ─────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: eazybank-frontend
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/version: "2.0.0"
+  annotations:
+    # ── Ingress controller ─────────────────────────────────────────
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect:       "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect:  "true"
+    nginx.ingress.kubernetes.io/use-regex:           "false"
+
+    # ── TLS — cert-manager auto-provision ─────────────────────────
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+
+    # ── Rate limiting ──────────────────────────────────────────────
+    nginx.ingress.kubernetes.io/limit-rps:         "100"
+    nginx.ingress.kubernetes.io/limit-connections:  "25"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
+
+    # ── Proxy timeouts ─────────────────────────────────────────────
+    nginx.ingress.kubernetes.io/proxy-body-size:    "10m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    nginx.ingress.kubernetes.io/proxy-read-timeout:    "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout:    "60"
+
+    # ── Security headers (applied at ingress level) ────────────────
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: SAMEORIGIN";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Permissions-Policy: camera=(), microphone=(), geolocation=()";
+      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload";
+      more_set_headers "Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' https://fonts.gstatic.com;";
+
+    # ── CORS (if needed for API calls from frontend) ───────────────
+    # nginx.ingress.kubernetes.io/enable-cors: "true"
+    # nginx.ingress.kubernetes.io/cors-allow-origin: "https://eazybank.example.com"
+    # nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
+
+    # ── Upstream keepalive ─────────────────────────────────────────
+    nginx.ingress.kubernetes.io/upstream-keepalive-connections: "32"
+    nginx.ingress.kubernetes.io/upstream-keepalive-timeout:     "60"
+
+spec:
+  ingressClassName: nginx
+
+  # ── TLS certificate (cert-manager creates Secret automatically) ──
+  tls:
+    - hosts:
+        - eazybank.example.com       # ← REPLACE with your domain
+        - www.eazybank.example.com   # ← REPLACE with your www domain
+      secretName: eazybank-tls-cert
+
+  rules:
+    # ── Main domain ────────────────────────────────────────────────
+    - host: eazybank.example.com     # ← REPLACE
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: eazybank-frontend
+                port:
+                  number: 80
+
+    # ── www redirect (optional) ────────────────────────────────────
+    - host: www.eazybank.example.com # ← REPLACE
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: eazybank-frontend
+                port:
+                  number: 80

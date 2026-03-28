@@ -1,0 +1,264 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank Frontend — Production Deployment (FIXED RESOURCES)
+# ─────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eazybank-frontend
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/version: "2.0.0"
+    app.kubernetes.io/managed-by: kubectl
+    team: platform
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    configmap.reloader.stakater.com/reload: "eazybank-nginx-config,eazybank-frontend-config"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: eazybank-frontend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  revisionHistoryLimit: 5
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: eazybank-frontend
+        app.kubernetes.io/component: frontend
+        app.kubernetes.io/version: "2.0.0"
+        team: platform
+      annotations:
+        checksum/nginx-config: "{{ include (print $.Template.BasePath \"/02-configmap.yaml\") . | sha256sum }}"
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "9113"
+        prometheus.io/path:   "/metrics"
+    spec:
+      serviceAccountName: eazybank-frontend-sa
+      automountServiceAccountToken: false
+      
+      # NOTE: Re-enable imagePullSecrets if you are using a private registry
+      # imagePullSecrets:
+      #   - name: eazybank-registry-secret
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser:    101
+        runAsGroup:   101
+        fsGroup:      101
+        seccompProfile:
+          type: RuntimeDefault
+
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway # Relaxed for small clusters
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: eazybank-frontend
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: eazybank-frontend
+
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: eazybank-frontend
+                topologyKey: kubernetes.io/hostname
+
+      terminationGracePeriodSeconds: 30
+
+      initContainers:
+        - name: config-validator
+          image: nginx:1.25.3-alpine
+          command:
+            - sh
+            - -c
+            - |
+              echo "Validating nginx config..."
+              nginx -t -c /etc/nginx/nginx.conf && echo "Config OK"
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+            - name: frontend-config
+              mountPath: /etc/nginx/conf.d/config.js
+              subPath: config.js
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+
+      containers:
+        # ── Nginx (main) ────────────────────────────────────────────
+        - name: nginx
+          image: sreeharinathpdev/biteme:frontend
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: http
+              containerPort: 80
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 80
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 80
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "64Mi"
+            limits:
+              cpu:    "500m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+              add:  ["NET_BIND_SERVICE"]
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: frontend-config
+              mountPath: /etc/nginx/conf.d/config.js
+              subPath: config.js
+              readOnly: true
+            - name: tmp-dir
+              mountPath: /tmp
+            - name: nginx-logs
+              mountPath: /var/log/nginx
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5 && nginx -s quit"]
+
+        # ── Nginx Prometheus Exporter sidecar ────────────────────────
+        - name: nginx-exporter
+          image: nginx/nginx-prometheus-exporter:1.1.0
+          args:
+            - -nginx.scrape-uri=http://localhost/stub_status
+          ports:
+            - name: metrics
+              containerPort: 9113
+          resources:
+            requests:
+              cpu:    "50m"   # FIXED: Bumped from 10m to meet LimitRange
+              memory: "32Mi"  # FIXED: Bumped from 16Mi to meet LimitRange
+            limits:
+              cpu:    "100m"
+              memory: "64Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: 9113
+            initialDelaySeconds: 10
+            periodSeconds: 30
+
+        # ── Filebeat sidecar ─────────────────────────────────────────
+        - name: filebeat
+          image: docker.elastic.co/beats/filebeat:8.11.3
+          args:
+            - -c
+            - /etc/filebeat/filebeat.yml
+            - -e
+            - --strict.perms=false
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: nginx-logs
+              mountPath: /var/log/nginx
+              readOnly: true
+            - name: filebeat-config
+              mountPath: /etc/filebeat
+              readOnly: true
+          resources:
+            requests:
+              cpu:    "50m"   # FIXED: Bumped from 20m to meet LimitRange
+              memory: "64Mi"
+            limits:
+              cpu:    "100m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: eazybank-nginx-config
+            items:
+              - key: nginx.conf
+                path: nginx.conf
+        - name: frontend-config
+          configMap:
+            name: eazybank-frontend-config
+            items:
+              - key: config.js
+                path: config.js
+        - name: filebeat-config
+          configMap:
+            name: eazybank-filebeat-config
+        - name: tmp-dir
+          emptyDir: {}
+        - name: nginx-logs
+          emptyDir: {}

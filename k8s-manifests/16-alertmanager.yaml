@@ -1,0 +1,208 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank — Alertmanager Configuration
+#  Namespace: monitoring
+#
+#  Routes all PrometheusRule alerts to Slack.
+#  Critical alerts → #platform-critical (immediate, no grouping wait)
+#  Warning alerts  → #platform-alerts  (5m grouping, 1h repeat)
+#  Info alerts     → #platform-info    (10m grouping, 4h repeat)
+#
+#  Requires: kube-prometheus-stack installed (includes Alertmanager)
+#  OR deploy standalone Alertmanager using this file.
+#
+#  Secret: Replace slack_api_url with real webhook URL.
+#  Use SealedSecret or ExternalSecret — never commit plaintext.
+# ─────────────────────────────────────────────────────────────────
+
+# ── Alertmanager config Secret ─────────────────────────────────────
+# In production: seal this with kubeseal before committing.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alertmanager-eazybank
+  namespace: monitoring
+  labels:
+    app: alertmanager
+type: Opaque
+stringData:
+  alertmanager.yaml: |
+    global:
+      resolve_timeout: 5m
+      # Default Slack API URL — override per receiver
+      slack_api_url: "https://hooks.slack.com/services/REPLACE/WITH/REAL_WEBHOOK"
+
+    # ── Inhibit rules — suppress warning if critical already firing ──
+    inhibit_rules:
+      - source_matchers:
+          - severity="critical"
+        target_matchers:
+          - severity="warning"
+        equal: [alertname, namespace]
+
+    # ── Route tree ────────────────────────────────────────────────────
+    route:
+      receiver: platform-alerts-slack
+      group_by: [alertname, namespace, severity]
+      group_wait:      30s
+      group_interval:  5m
+      repeat_interval: 1h
+
+      routes:
+        # Critical — fast, dedicated channel, no grouping wait
+        - matchers:
+            - severity="critical"
+          receiver: platform-critical-slack
+          group_wait:      10s
+          group_interval:  1m
+          repeat_interval: 15m
+          continue: false
+
+        # Warning — standard grouping
+        - matchers:
+            - severity="warning"
+          receiver: platform-alerts-slack
+          group_wait:      30s
+          group_interval:  5m
+          repeat_interval: 1h
+          continue: false
+
+        # Info — low priority, batched
+        - matchers:
+            - severity="info"
+          receiver: platform-info-slack
+          group_wait:      10m
+          group_interval:  30m
+          repeat_interval: 4h
+          continue: false
+
+    # ── Receivers ─────────────────────────────────────────────────────
+    receivers:
+      - name: platform-critical-slack
+        slack_configs:
+          - channel: "#platform-critical"
+            send_resolved: true
+            icon_emoji: ":red_circle:"
+            username: "EazyBank Alertmanager"
+            title: |-
+              [{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}
+            text: |-
+              {{ range .Alerts }}
+              *Alert:* {{ .Annotations.summary }}
+              *Namespace:* {{ .Labels.namespace }}
+              *Severity:* {{ .Labels.severity }}
+              *Description:* {{ .Annotations.description }}
+              {{ if .Annotations.runbook_url }}*Runbook:* {{ .Annotations.runbook_url }}{{ end }}
+              {{ end }}
+            color: |-
+              {{ if eq .Status "firing" }}danger{{ else }}good{{ end }}
+
+      - name: platform-alerts-slack
+        slack_configs:
+          - channel: "#platform-alerts"
+            send_resolved: true
+            icon_emoji: ":warning:"
+            username: "EazyBank Alertmanager"
+            title: |-
+              [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}
+            text: |-
+              {{ range .Alerts }}
+              *Alert:* {{ .Annotations.summary }}
+              *Description:* {{ .Annotations.description }}
+              {{ end }}
+            color: |-
+              {{ if eq .Status "firing" }}warning{{ else }}good{{ end }}
+
+      - name: platform-info-slack
+        slack_configs:
+          - channel: "#platform-info"
+            send_resolved: false
+            icon_emoji: ":information_source:"
+            username: "EazyBank Alertmanager"
+            title: "[INFO] {{ .CommonLabels.alertname }}"
+            text: |-
+              {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+---
+# ── Standalone Alertmanager Deployment ────────────────────────────
+# Only needed if NOT using kube-prometheus-stack.
+# If kube-prometheus-stack is installed, comment this out and
+# patch its Alertmanager via Helm values instead.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: monitoring
+  labels:
+    app: alertmanager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.26.0
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yaml
+            - --storage.path=/alertmanager
+            - --web.listen-address=:9093
+            - --cluster.listen-address=
+          ports:
+            - containerPort: 9093
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+              readOnly: true
+            - name: storage
+              mountPath: /alertmanager
+          resources:
+            requests:
+              cpu:    "50m"
+              memory: "64Mi"
+            limits:
+              cpu:    "100m"
+              memory: "128Mi"
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9093
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9093
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          secret:
+            secretName: alertmanager-eazybank
+        - name: storage
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: monitoring
+  labels:
+    app: alertmanager
+spec:
+  type: NodePort
+  selector:
+    app: alertmanager
+  ports:
+    - name: http
+      port: 9093
+      targetPort: 9093
+      nodePort: 30093    # access: http://<ec2-ip>:30093

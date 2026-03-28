@@ -1,0 +1,91 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank — cert-manager ClusterIssuer
+#
+#  Required by: 08-ingress.yaml (cert-manager.io/cluster-issuer annotation)
+#
+#  Install cert-manager first:
+#    helm repo add jetstack https://charts.jetstack.io
+#    helm repo update
+#    helm install cert-manager jetstack/cert-manager \
+#      --namespace cert-manager --create-namespace \
+#      --set installCRDs=true \
+#      --set global.leaderElection.namespace=cert-manager
+#
+#  Verify: kubectl get pods -n cert-manager
+#
+#  Two issuers provided:
+#    letsencrypt-staging → test without rate limits (certs NOT trusted)
+#    letsencrypt-prod    → real trusted certs (rate limited)
+#
+#  Start with staging, then switch to prod in 08-ingress.yaml.
+# ─────────────────────────────────────────────────────────────────
+
+# ── Staging issuer (test first — no rate limits) ───────────────────
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  labels:
+    app.kubernetes.io/name: cert-manager
+    app.kubernetes.io/component: issuer
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: platform-team@eazybytes.com    # ← REPLACE with real email
+    privateKeySecretRef:
+      name: letsencrypt-staging-key
+    solvers:
+      # HTTP-01 challenge (works if port 80 is publicly accessible)
+      - http01:
+          ingress:
+            class: nginx
+            podTemplate:
+              spec:
+                nodeSelector:
+                  kubernetes.io/os: linux
+---
+# ── Production issuer (use after staging works) ────────────────────
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  labels:
+    app.kubernetes.io/name: cert-manager
+    app.kubernetes.io/component: issuer
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: platform-team@eazybytes.com    # ← REPLACE with real email
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+            podTemplate:
+              spec:
+                nodeSelector:
+                  kubernetes.io/os: linux
+
+# ─────────────────────────────────────────────────────────────────
+#  WORKFLOW:
+#  1. Apply this file:
+#       kubectl apply -f cert-manager-issuer.yaml
+#
+#  2. Check issuer is ready:
+#       kubectl describe clusterissuer letsencrypt-staging
+#       kubectl describe clusterissuer letsencrypt-prod
+#       # Look for: "The ACME account was registered..."
+#
+#  3. Apply 08-ingress.yaml with staging first:
+#       cert-manager.io/cluster-issuer: "letsencrypt-staging"
+#
+#  4. Check cert is issued:
+#       kubectl get certificate -n eazybank
+#       kubectl describe certificate eazybank-tls-cert -n eazybank
+#
+#  5. Once staging works, switch to prod:
+#       cert-manager.io/cluster-issuer: "letsencrypt-prod"
+#       kubectl delete certificate eazybank-tls-cert -n eazybank
+#       kubectl apply -f 08-ingress.yaml
+# ─────────────────────────────────────────────────────────────────

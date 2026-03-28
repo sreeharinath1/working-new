@@ -1,0 +1,289 @@
+---
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank — Ansible Playbook: EC2 Node Bootstrap
+#
+#  Prepares an Amazon Linux 2023 / RHEL EC2 for kubeadm K8s.
+#
+#  Run:
+#    ansible-playbook -i inventory.ini playbook.yml \
+#      --private-key ~/.ssh/eazybank-key.pem \
+#      -u ec2-user --become
+#
+#  inventory.ini:
+#    [masters]
+#    <ec2-public-ip> ansible_user=ec2-user
+#
+#  Stages:
+#    1. system    — sysctl, swap, firewall, ulimits
+#    2. container — containerd install + config
+#    3. kubernetes — kubelet/kubeadm/kubectl install
+#    4. cluster   — kubeadm init (master only)
+#    5. network   — Flannel CNI
+#    6. deploy    — apply K8s manifests
+# ─────────────────────────────────────────────────────────────────
+
+- name: Bootstrap EazyBank K8s node
+  hosts: masters
+  become: true
+  vars:
+    k8s_version: "1.28"
+    pod_cidr: "10.244.0.0/16"
+    manifests_dir: "/home/ec2-user/ff"
+    kubeconfig_path: "/home/ec2-user/.kube/config"
+
+  tasks:
+
+    # ══════════════════════════════════════════════════════════════
+    # STAGE 1: System prerequisites
+    # ══════════════════════════════════════════════════════════════
+    - name: Disable swap permanently
+      block:
+        - command: swapoff -a
+          changed_when: false
+        - replace:
+            path: /etc/fstab
+            regexp: '^([^#].*\s+swap\s+.*)$'
+            replace: '# \1'
+      tags: [system]
+
+    - name: Load required kernel modules
+      modprobe:
+        name: "{{ item }}"
+        state: present
+      loop: [overlay, br_netfilter]
+      tags: [system]
+
+    - name: Persist kernel modules
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+      tags: [system]
+
+    - name: Set required sysctl parameters
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        sysctl_file: /etc/sysctl.d/k8s.conf
+        reload: true
+      loop:
+        - { key: net.bridge.bridge-nf-call-iptables,  value: "1" }
+        - { key: net.bridge.bridge-nf-call-ip6tables, value: "1" }
+        - { key: net.ipv4.ip_forward,                 value: "1" }
+        - { key: fs.inotify.max_user_watches,          value: "524288" }
+        - { key: fs.inotify.max_user_instances,        value: "512" }
+        - { key: vm.max_map_count,                     value: "262144" }  # for Elasticsearch
+      tags: [system]
+
+    - name: Set ulimits for container workloads
+      pam_limits:
+        domain: "*"
+        limit_type: "{{ item.type }}"
+        limit_item: "{{ item.item }}"
+        value: "{{ item.value }}"
+      loop:
+        - { type: soft, item: nofile, value: "65536" }
+        - { type: hard, item: nofile, value: "65536" }
+        - { type: soft, item: nproc,  value: "65536" }
+        - { type: hard, item: nproc,  value: "65536" }
+      tags: [system]
+
+    - name: Disable SELinux (or set permissive)
+      selinux:
+        policy: targeted
+        state: permissive
+      when: ansible_os_family == "RedHat"
+      ignore_errors: true
+      tags: [system]
+
+    # ══════════════════════════════════════════════════════════════
+    # STAGE 2: Container runtime (containerd)
+    # ══════════════════════════════════════════════════════════════
+    - name: Install containerd dependencies
+      package:
+        name:
+          - curl
+          - gnupg2
+          - ca-certificates
+          - yum-utils
+        state: present
+      tags: [container]
+
+    - name: Install containerd
+      package:
+        name: containerd
+        state: present
+      tags: [container]
+
+    - name: Create containerd config directory
+      file:
+        path: /etc/containerd
+        state: directory
+        mode: "0755"
+      tags: [container]
+
+    - name: Generate default containerd config
+      shell: containerd config default > /etc/containerd/config.toml
+      args:
+        creates: /etc/containerd/config.toml
+      tags: [container]
+
+    - name: Set SystemdCgroup = true in containerd config
+      replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
+      notify: restart containerd
+      tags: [container]
+
+    - name: Enable and start containerd
+      systemd:
+        name: containerd
+        enabled: true
+        state: started
+      tags: [container]
+
+    # ══════════════════════════════════════════════════════════════
+    # STAGE 3: Kubernetes binaries
+    # ══════════════════════════════════════════════════════════════
+    - name: Add Kubernetes yum repo
+      yum_repository:
+        name: kubernetes
+        description: Kubernetes
+        baseurl: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/rpm/"
+        gpgcheck: true
+        gpgkey: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/rpm/repodata/repomd.xml.key"
+        enabled: true
+      tags: [kubernetes]
+
+    - name: Install kubeadm, kubelet, kubectl
+      package:
+        name:
+          - "kubelet"
+          - "kubeadm"
+          - "kubectl"
+        state: present
+      tags: [kubernetes]
+
+    - name: Enable and start kubelet
+      systemd:
+        name: kubelet
+        enabled: true
+        state: started
+      tags: [kubernetes]
+
+    # ══════════════════════════════════════════════════════════════
+    # STAGE 4: kubeadm init (master only)
+    # ══════════════════════════════════════════════════════════════
+    - name: Check if cluster already initialized
+      stat:
+        path: /etc/kubernetes/admin.conf
+      register: kubeconfig_stat
+      tags: [cluster]
+
+    - name: Initialize K8s cluster with kubeadm
+      command: >
+        kubeadm init
+        --pod-network-cidr={{ pod_cidr }}
+        --ignore-preflight-errors=NumCPU,Mem
+      when: not kubeconfig_stat.stat.exists
+      register: kubeadm_output
+      tags: [cluster]
+
+    - name: Create .kube directory for ec2-user
+      file:
+        path: "/home/ec2-user/.kube"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: "0755"
+      tags: [cluster]
+
+    - name: Copy kubeconfig to ec2-user home
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ kubeconfig_path }}"
+        remote_src: true
+        owner: ec2-user
+        group: ec2-user
+        mode: "0600"
+      tags: [cluster]
+
+    - name: Remove control-plane taint (single-node cluster)
+      become_user: ec2-user
+      command: kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      ignore_errors: true
+      tags: [cluster]
+
+    # ══════════════════════════════════════════════════════════════
+    # STAGE 5: Flannel CNI
+    # ══════════════════════════════════════════════════════════════
+    - name: Apply Flannel CNI
+      become_user: ec2-user
+      command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      tags: [network]
+
+    - name: Wait for all nodes to be Ready
+      become_user: ec2-user
+      command: kubectl wait --for=condition=Ready node --all --timeout=120s
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      tags: [network]
+
+    # ══════════════════════════════════════════════════════════════
+    # STAGE 6: Apply EazyBank manifests
+    # ══════════════════════════════════════════════════════════════
+    - name: Apply all K8s manifests in order
+      become_user: ec2-user
+      command: kubectl apply -f {{ manifests_dir }}/{{ item }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      loop:
+        - 00-namespace.yaml
+        - 01-rbac.yaml
+        - 02-configmap.yaml
+        - 03-secret.yaml
+        - 04-deployment.yaml
+        - 05-service.yaml
+        - 06-hpa.yaml
+        - 07-pdb.yaml
+        - 08-ingress.yaml
+        - 09-networkpolicy.yaml
+        - 10-filebeat-configmap.yaml
+        - 11-monitoring.yaml
+        - 12-elk-stack.yaml
+        - 13-security-scanning.yaml
+      tags: [deploy]
+
+    - name: Wait for eazybank-frontend deployment to be ready
+      become_user: ec2-user
+      command: >
+        kubectl rollout status deployment/eazybank-frontend
+        -n eazybank --timeout=120s
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      tags: [deploy]
+
+    - name: Show pod status
+      become_user: ec2-user
+      command: kubectl get pods -n eazybank -o wide
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: pod_status
+      tags: [deploy]
+
+    - name: Print pod status
+      debug:
+        msg: "{{ pod_status.stdout_lines }}"
+      tags: [deploy]
+
+  handlers:
+    - name: restart containerd
+      systemd:
+        name: containerd
+        state: restarted
