@@ -1,0 +1,179 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank Frontend — ArgoCD GitOps
+#
+#  Prerequisites:
+#    kubectl create namespace argocd
+#    kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+#
+#  Access UI:
+#    kubectl port-forward svc/argocd-server -n argocd 8080:443
+#    Initial password: kubectl get secret argocd-initial-admin-secret \
+#      -n argocd -o jsonpath="{.data.password}" | base64 -d
+#
+#  Apply this file:
+#    kubectl apply -f 14-argocd-app.yaml
+#
+#  Structure:
+#    AppProject  → namespace boundary + source repo restrictions
+#    Application → watches your Git repo, syncs to eazybank namespace
+# ─────────────────────────────────────────────────────────────────
+
+# ── AppProject — scope and RBAC for EazyBank apps ─────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: eazybank
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: eazybank
+    team: platform
+  # Finalizer ensures project is not deleted while apps exist
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: "EazyBank production frontend and supporting services"
+
+  # ── Allowed source repositories ──────────────────────────────────
+  sourceRepos:
+    - "https://github.com/YOUR_ORG/eazybank-frontend.git"   # ← REPLACE
+    - "https://charts.helm.sh/stable"
+    - "https://prometheus-community.github.io/helm-charts"
+
+  # ── Allowed destination clusters + namespaces ─────────────────────
+  destinations:
+    - server: "https://kubernetes.default.svc"   # in-cluster
+      namespace: eazybank
+    - server: "https://kubernetes.default.svc"
+      namespace: monitoring
+    - server: "https://kubernetes.default.svc"
+      namespace: argocd
+
+  # ── Resource whitelist (what ArgoCD can create) ───────────────────
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: "rbac.authorization.k8s.io"
+      kind: ClusterRole
+    - group: "rbac.authorization.k8s.io"
+      kind: ClusterRoleBinding
+    - group: "cert-manager.io"
+      kind: ClusterIssuer
+
+  # ── Namespace-scoped resources (implicitly all allowed) ───────────
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  # ── Deny creating dangerous resources ────────────────────────────
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: ResourceQuota   # managed manually in 00-namespace.yaml
+
+  # ── Sync windows — prevent auto-sync during business hours ────────
+  syncWindows:
+    - kind: deny
+      schedule: "0 9 * * 1-5"   # Block Mon-Fri 9AM
+      duration: 8h               # for 8 hours (9AM-5PM)
+      applications:
+        - "*"
+      manualSync: true           # allow manual override
+---
+# ── Application — eazybank-frontend K8s manifests ─────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: eazybank-frontend
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: gitops
+    team: platform
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    # Slack notification on sync (requires ArgoCD Notifications)
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: platform-alerts
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: platform-alerts
+spec:
+  project: eazybank
+
+  # ── Source — your Git repo ────────────────────────────────────────
+  source:
+    repoURL:        "https://github.com/YOUR_ORG/eazybank-frontend.git"   # ← REPLACE
+    targetRevision: main                          # branch / tag / commit SHA
+    path:           "k8s"                         # folder containing YAMLs 00-13
+
+  # ── Destination ───────────────────────────────────────────────────
+  destination:
+    server:    "https://kubernetes.default.svc"
+    namespace: eazybank
+
+  # ── Sync policy ───────────────────────────────────────────────────
+  syncPolicy:
+    automated:
+      prune:    true    # delete resources removed from Git
+      selfHeal: true    # revert manual kubectl changes
+      allowEmpty: false # never sync an empty set of resources
+
+    syncOptions:
+      - CreateNamespace=true        # create namespace if missing
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true              # prune after all resources synced
+      - ApplyOutOfSyncOnly=true     # only apply changed resources
+      - RespectIgnoreDifferences=true
+      - ServerSideApply=true        # use server-side apply (K8s 1.22+)
+
+    retry:
+      limit: 5
+      backoff:
+        duration:    "5s"
+        factor:      2
+        maxDuration: "3m"
+
+  # ── Health checks — custom for CronJob ───────────────────────────
+  ignoreDifferences:
+    # HPA replica count changes at runtime — don't revert to Git value
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+    # Cert-manager injects fields into Ingress
+    - group: networking.k8s.io
+      kind: Ingress
+      jsonPointers:
+        - /metadata/annotations/kubectl.kubernetes.io~1last-applied-configuration
+
+  # ── Info links shown in ArgoCD UI ────────────────────────────────
+  info:
+    - name: Kibana
+      value: "http://YOUR_NODE_IP:30601"
+    - name: Runbook
+      value: "https://wiki.eazybytes.com/runbooks/frontend"
+---
+# ── Application — ELK Stack monitoring ────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: eazybank-monitoring
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: eazybank-monitoring
+    team: platform
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: eazybank
+  source:
+    repoURL:        "https://github.com/YOUR_ORG/eazybank-frontend.git"   # ← REPLACE
+    targetRevision: main
+    path:           "k8s/monitoring"     # 11-monitoring.yaml, 12-elk-stack.yaml
+  destination:
+    server:    "https://kubernetes.default.svc"
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune:    true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

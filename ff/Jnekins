@@ -1,0 +1,317 @@
+// ─────────────────────────────────────────────────────────────────
+//  EazyBank Frontend — Jenkinsfile (Declarative Pipeline)
+//
+//  Stages:
+//    1. Checkout      → clone repo
+//    2. Lint          → YAML + Dockerfile + RuboCop
+//    3. Test          → npm test
+//    4. Security      → Trivy + Snyk scan
+//    5. Build         → Docker build + push
+//    6. Deploy Dev    → kubectl / ArgoCD sync (main branch)
+//    7. Deploy Prod   → manual gate + ArgoCD (tag only)
+//    8. Notify        → Slack
+//
+//  Jenkins plugins required:
+//    Pipeline, Docker Pipeline, Kubernetes, Slack Notification,
+//    HTML Publisher, Git, Credentials Binding, Timestamper
+//
+//  Jenkins Credentials (configure in Jenkins → Manage Credentials):
+//    dockerhub-credentials  → Username/Password
+//    argocd-token           → Secret text
+//    snyk-token             → Secret text
+//    slack-webhook          → Secret text
+//    kubeconfig             → Secret file (kubeconfig for cluster)
+// ─────────────────────────────────────────────────────────────────
+pipeline {
+    agent {
+        kubernetes {
+            yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: jenkins-agent
+  containers:
+    - name: node
+      image: node:20-alpine
+      command: ["cat"]
+      tty: true
+      resources:
+        requests: { cpu: "200m", memory: "512Mi" }
+        limits:   { cpu: "500m", memory: "1Gi"  }
+    - name: docker
+      image: docker:24-dind
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - name: docker-socket
+          mountPath: /var/run/docker.sock
+    - name: kubectl
+      image: bitnami/kubectl:1.28
+      command: ["cat"]
+      tty: true
+    - name: trivy
+      image: aquasec/trivy:0.48.3
+      command: ["cat"]
+      tty: true
+  volumes:
+    - name: docker-socket
+      hostPath:
+        path: /var/run/docker.sock
+'''
+        }
+    }
+
+    // ── Environment variables ───────────────────────────────────────
+    environment {
+        IMAGE_NAME    = "eazybytes/eazybank-frontend"
+        IMAGE_TAG     = "${env.GIT_COMMIT.take(8)}"
+        ARGOCD_APP    = "eazybank-frontend"
+        ARGOCD_SERVER = "argocd.eazybank.example.com"    // ← REPLACE
+    }
+
+    // ── Global options ──────────────────────────────────────────────
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 45, unit: 'MINUTES')
+        timestamps()
+        ansiColor('xterm')
+    }
+
+    // ── Trigger on SCM push ─────────────────────────────────────────
+    triggers {
+        pollSCM('H/5 * * * *')   // poll every 5 min (or use webhook)
+    }
+
+    stages {
+        // ── STAGE 1: Checkout ────────────────────────────────────────
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_COMMIT_MSG = sh(
+                        script: 'git log -1 --pretty=%B',
+                        returnStdout: true
+                    ).trim()
+                    echo "Branch: ${env.BRANCH_NAME}"
+                    echo "Commit: ${env.GIT_COMMIT}"
+                }
+            }
+        }
+
+        // ── STAGE 2: Lint ─────────────────────────────────────────────
+        stage('Lint') {
+            parallel {
+                stage('YAML lint') {
+                    steps {
+                        container('node') {
+                            sh '''
+                                npm install -g yaml-lint
+                                yamllint k8s/*.yaml
+                            '''
+                        }
+                    }
+                }
+                stage('Dockerfile lint') {
+                    steps {
+                        container('docker') {
+                            sh '''
+                                docker run --rm -i hadolint/hadolint < Dockerfile
+                            '''
+                        }
+                    }
+                }
+                stage('RuboCop') {
+                    steps {
+                        container('node') {
+                            sh '''
+                                if [ -f Gemfile ]; then
+                                    gem install rubocop rubocop-rails --no-document
+                                    rubocop --config .rubocop.yml --format progress
+                                else
+                                    echo "No Gemfile — skipping RuboCop"
+                                fi
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── STAGE 3: Test ─────────────────────────────────────────────
+        stage('Test') {
+            steps {
+                container('node') {
+                    sh '''
+                        npm ci
+                        npm test -- --coverage --watchAll=false --ci
+                    '''
+                }
+            }
+            post {
+                always {
+                    publishHTML(target: [
+                        allowMissing:          false,
+                        alwaysLinkToLastBuild: true,
+                        keepAll:               true,
+                        reportDir:             'coverage/lcov-report',
+                        reportFiles:           'index.html',
+                        reportName:            'Coverage Report'
+                    ])
+                }
+            }
+        }
+
+        // ── STAGE 4: Build image ──────────────────────────────────────
+        stage('Build Image') {
+            steps {
+                container('docker') {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'dockerhub-credentials',
+                            usernameVariable: 'DOCKERHUB_USER',
+                            passwordVariable: 'DOCKERHUB_TOKEN'
+                        )
+                    ]) {
+                        sh """
+                            docker login -u \$DOCKERHUB_USER -p \$DOCKERHUB_TOKEN
+                            docker build \\
+                                --target production \\
+                                --build-arg BUILD_DATE=\$(date -u +%Y-%m-%dT%H:%M:%SZ) \\
+                                --build-arg GIT_COMMIT=${env.GIT_COMMIT} \\
+                                --cache-from ${env.IMAGE_NAME}:latest \\
+                                -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} \\
+                                -t ${env.IMAGE_NAME}:latest \\
+                                .
+                        """
+                    }
+                }
+            }
+        }
+
+        // ── STAGE 5: Security Scan ────────────────────────────────────
+        stage('Security Scan') {
+            parallel {
+                stage('Trivy image scan') {
+                    steps {
+                        container('trivy') {
+                            sh """
+                                trivy image \\
+                                    --exit-code 1 \\
+                                    --severity HIGH,CRITICAL \\
+                                    --no-progress \\
+                                    --format json \\
+                                    --output trivy-report.json \\
+                                    ${env.IMAGE_NAME}:${env.IMAGE_TAG} || \\
+                                (cat trivy-report.json && exit 1)
+                            """
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
+                        }
+                    }
+                }
+                stage('Snyk scan') {
+                    steps {
+                        container('node') {
+                            withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')]) {
+                                sh '''
+                                    npm install -g snyk
+                                    snyk auth $SNYK_TOKEN
+                                    snyk test --severity-threshold=high || true
+                                    snyk container test ${IMAGE_NAME}:${IMAGE_TAG} \
+                                        --severity-threshold=high || true
+                                '''
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── STAGE 6: Push image ───────────────────────────────────────
+        stage('Push Image') {
+            when {
+                anyOf {
+                    branch 'main'
+                    buildingTag()
+                }
+            }
+            steps {
+                container('docker') {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'dockerhub-credentials',
+                            usernameVariable: 'DOCKERHUB_USER',
+                            passwordVariable: 'DOCKERHUB_TOKEN'
+                        )
+                    ]) {
+                        sh """
+                            docker login -u \$DOCKERHUB_USER -p \$DOCKERHUB_TOKEN
+                            docker push ${env.IMAGE_NAME}:${env.IMAGE_TAG}
+                            docker push ${env.IMAGE_NAME}:latest
+                        """
+                    }
+                }
+            }
+        }
+
+        // ── STAGE 7: Deploy Dev ───────────────────────────────────────
+        stage('Deploy Dev') {
+            when { branch 'main' }
+            steps {
+                withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN')]) {
+                    sh """
+                        curl -sSf -X POST \\
+                            -H "Authorization: Bearer \$ARGOCD_TOKEN" \\
+                            -H "Content-Type: application/json" \\
+                            "https://${env.ARGOCD_SERVER}/api/v1/applications/${env.ARGOCD_APP}/sync" \\
+                            -d '{"prune":true}' | jq .
+                    """
+                }
+            }
+        }
+
+        // ── STAGE 8: Deploy Prod (manual gate) ───────────────────────
+        stage('Deploy Prod') {
+            when { buildingTag() }
+            steps {
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: "Deploy ${env.TAG_NAME} to production?",
+                          ok:      "Deploy",
+                          submitter: "platform-team"
+                }
+                withCredentials([string(credentialsId: 'argocd-token', variable: 'ARGOCD_TOKEN')]) {
+                    sh """
+                        curl -sSf -X POST \\
+                            -H "Authorization: Bearer \$ARGOCD_TOKEN" \\
+                            "https://${env.ARGOCD_SERVER}/api/v1/applications/${env.ARGOCD_APP}/sync" \\
+                            -d '{"prune":true}' | jq .
+                    """
+                }
+            }
+        }
+    }
+
+    // ── Post — always notify Slack ──────────────────────────────────
+    post {
+        success {
+            slackSend(
+                channel:     '#platform-alerts',
+                color:       'good',
+                message:     "✅ EazyBank Frontend build *${env.BUILD_NUMBER}* succeeded — ${env.IMAGE_TAG}\n${env.BUILD_URL}"
+            )
+        }
+        failure {
+            slackSend(
+                channel:     '#platform-alerts',
+                color:       'danger',
+                message:     "❌ EazyBank Frontend build *${env.BUILD_NUMBER}* FAILED — ${env.GIT_COMMIT_MSG}\n${env.BUILD_URL}"
+            )
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

@@ -1,0 +1,61 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank Frontend — Service
+#  Two services:
+#    1. ClusterIP  → internal cluster traffic + Ingress backend
+#    2. NodePort   → direct EC2 access (dev/staging/no-ingress)
+#
+#  ServiceMonitor in 11-monitoring.yaml selects by label:
+#    app.kubernetes.io/name: eazybank-frontend
+# ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: eazybank-frontend
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/version: "2.0.0"
+  annotations:
+    # Prometheus ServiceMonitor selects this service via label above.
+    # These pod-level annotations are belt+braces for non-operator scraping.
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "9113"
+    prometheus.io/path:   "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: eazybank-frontend
+  ports:
+    # ── HTTP traffic (Ingress → pod port 80) ──────────────────────
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+    # ── Prometheus metrics (nginx-prometheus-exporter) ────────────
+    - name: metrics
+      port: 9113
+      targetPort: 9113
+      protocol: TCP
+---
+# ── NodePort — direct node access (no Ingress needed) ─────────────
+# Use this to test on bare EC2/VM:  http://<ec2-public-ip>:30080
+# Exclude this from production if Ingress is in place.
+apiVersion: v1
+kind: Service
+metadata:
+  name: eazybank-frontend-nodeport
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: frontend
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: eazybank-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      nodePort: 30080    # http://<node-ip>:30080
+      protocol: TCP

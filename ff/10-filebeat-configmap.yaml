@@ -1,0 +1,85 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank Frontend — Filebeat ConfigMap (K8s sidecar config)
+# ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eazybank-filebeat-config
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: logging
+data:
+  filebeat.yml: |
+    # ── Filebeat inputs ─────────────────────────────────────────
+    filebeat.inputs:
+      - type: log
+        enabled: true
+        paths:
+          - /var/log/nginx/access.log
+        tags: ["nginx", "access", "eazybank-frontend"]
+        fields:
+          service:     eazybank-frontend
+          environment: production
+          log_type:    access
+          namespace:   "${NAMESPACE:eazybank}"
+          pod_name:    "${POD_NAME:unknown}"
+          node_name:   "${NODE_NAME:unknown}"
+        fields_under_root: false
+        json.keys_under_root: true      # parse JSON log format
+        json.overwrite_keys: true
+        json.add_error_key: true
+        json.expand_keys: true
+        multiline.type: pattern
+        multiline.negate: true
+        multiline.match: after
+
+      - type: log
+        enabled: true
+        paths:
+          - /var/log/nginx/error.log
+        tags: ["nginx", "error", "eazybank-frontend"]
+        fields:
+          service:     eazybank-frontend
+          environment: production
+          log_type:    error
+        fields_under_root: false
+
+    # ── Processors ──────────────────────────────────────────────
+    processors:
+      - add_host_metadata:
+          when.not.contains.tags: forwarded
+      - add_cloud_metadata: ~
+      - add_docker_metadata:
+          host: "unix:///var/run/docker.sock"
+      - add_kubernetes_metadata:
+          host: ${NODE_NAME}
+          matchers:
+            - logs_path:
+                logs_path: "/var/log/nginx/"
+      # Drop healthz access logs (reduce noise)
+      - drop_event:
+          when:
+            contains:
+              message: "GET /healthz"
+      - drop_event:
+          when:
+            contains:
+              message: "GET /readyz"
+      - drop_event:
+          when:
+            contains:
+              message: "GET /stub_status"
+
+    # ── Output → Logstash ────────────────────────────────────────
+    output.logstash:
+      hosts: ["logstash.monitoring.svc.cluster.local:5044"]
+      loadbalance: true
+      ssl.enabled: false   # enable with certs in full prod
+
+    # ── Monitoring ───────────────────────────────────────────────
+    monitoring.enabled: false
+
+    # ── Logging ─────────────────────────────────────────────────
+    logging.level: warning
+    logging.to_files: false

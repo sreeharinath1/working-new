@@ -1,0 +1,248 @@
+# ════════════════════════════════════════════════════════════════════
+# EazyBank — PostgreSQL Databases (accounts, loans, cards)
+# ════════════════════════════════════════════════════════════════════
+
+# ── ACCOUNTS DB ──────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: accountsdb
+  namespace: eazybank
+  labels:
+    app: accountsdb
+    tier: database
+    app.kubernetes.io/part-of: eazybank
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: accountsdb
+  template:
+    metadata:
+      labels:
+        app: accountsdb
+        tier: database
+    spec:
+      serviceAccountName: eazybank-sa
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: accountsdb
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "root", "-d", "accountsdb"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "root", "-d", "accountsdb"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: data
+          emptyDir: {}          # Replace with PVC in production
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: accountsdb
+  namespace: eazybank
+  labels:
+    app: accountsdb
+    app.kubernetes.io/part-of: eazybank
+spec:
+  selector:
+    app: accountsdb
+  ports:
+    - port: 5432
+      targetPort: 5432
+  # ClusterIP only — databases should NOT be exposed externally
+---
+# ── LOANS DB ─────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loansdb
+  namespace: eazybank
+  labels:
+    app: loansdb
+    tier: database
+    app.kubernetes.io/part-of: eazybank
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loansdb
+  template:
+    metadata:
+      labels:
+        app: loansdb
+        tier: database
+    spec:
+      serviceAccountName: eazybank-sa
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: loansdb
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "root", "-d", "loansdb"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "root", "-d", "loansdb"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loansdb
+  namespace: eazybank
+  labels:
+    app: loansdb
+    app.kubernetes.io/part-of: eazybank
+spec:
+  selector:
+    app: loansdb
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+# ── CARDS DB ─────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cardsdb
+  namespace: eazybank
+  labels:
+    app: cardsdb
+    tier: database
+    app.kubernetes.io/part-of: eazybank
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cardsdb
+  template:
+    metadata:
+      labels:
+        app: cardsdb
+        tier: database
+    spec:
+      serviceAccountName: eazybank-sa
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: cardsdb
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "root", "-d", "cardsdb"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "root", "-d", "cardsdb"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cardsdb
+  namespace: eazybank
+  labels:
+    app: cardsdb
+    app.kubernetes.io/part-of: eazybank
+spec:
+  selector:
+    app: cardsdb
+  ports:
+    - port: 5432
+      targetPort: 5432

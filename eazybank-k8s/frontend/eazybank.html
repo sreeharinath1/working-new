@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>EazyBank · Command Center</title>
+<script src="/config.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  /* ── PALETTE ── */
+  --ink:#080b12;--ink1:#0d1120;--ink2:#121729;--ink3:#18202f;--ink4:#1e2840;
+  --rim:#ffffff0a;--rim2:#ffffff14;--rim3:#ffffff20;--rim4:#ffffff2e;
+  --neon:#00ffe0;--neon2:#00c8b4;--neondim:#00ffe01a;--neonborder:#00ffe033;
+  --gold:#f0c040;--golddim:#f0c0401a;--goldborder:#f0c04033;
+  --rose:#ff4d6d;--rosedim:#ff4d6d18;--roseborder:#ff4d6d33;
+  --sky:#4da6ff;--skydim:#4da6ff18;--skyborder:#4da6ff33;
+  --lime:#7fff6e;--limedim:#7fff6e18;
+  --tx:#e8edf5;--tx2:#9aa4b8;--mu:#4e5a72;--mu2:#2e3548;
+  /* ── TYPE ── */
+  --syne:'Syne',sans-serif;
+  --mono:'Space Mono',monospace;
+  --body:'Inter',sans-serif;
+  /* ── SHAPE ── */
+  --r6:6px;--r8:8px;--r10:10px;--r12:12px;--r16:16px;--r20:20px;--r24:24px;
+}
+html,body{height:100%;background:var(--ink);color:var(--tx);font-family:var(--body);overflow:hidden}
+
+/* ── NOISE TEXTURE OVERLAY ── */
+body::before{
+  content:'';position:fixed;inset:0;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events:none;z-index:0;opacity:.5;
+}
+
+/* ── GRID LAYOUT ── */
+.shell{display:grid;grid-template-columns:72px 220px 1fr;grid-template-rows:56px 1fr;height:100vh;position:relative;z-index:1}
+
+/* ── TOPBAR ── */
+.topbar{
+  grid-column:1/-1;display:flex;align-items:center;padding:0 20px 0 0;
+  background:var(--ink1);border-bottom:1px solid var(--rim2);gap:12px;z-index:40;
+  position:relative;
+}
+.topbar::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,var(--neon)00,var(--neon)66,var(--neon)00)}
+
+.brand-strip{width:72px;height:56px;display:flex;align-items:center;justify-content:center;
+  background:var(--ink);border-right:1px solid var(--rim2);border-bottom:1px solid var(--neonborder);flex-shrink:0}
+.brand-logo{width:36px;height:36px;border-radius:10px;background:var(--neondim);border:1px solid var(--neonborder);
+  display:flex;align-items:center;justify-content:center;font-size:18px;
+  box-shadow:0 0 20px var(--neon)22,inset 0 0 10px var(--neon)11}
+
+.brand-text{padding:0 16px;border-right:1px solid var(--rim2)}
+.brand-name{font-family:var(--syne);font-size:17px;font-weight:800;color:var(--neon);
+  text-shadow:0 0 20px var(--neon)88;letter-spacing:-.02em}
+.brand-sub{font-size:9px;color:var(--mu);font-family:var(--mono);letter-spacing:.15em;text-transform:uppercase}
+
+/* Config strip */
+.cfg-row{display:flex;align-items:center;gap:8px;flex:1}
+.cfg-seg{display:flex;align-items:center;gap:6px;padding:0 14px;border-right:1px solid var(--rim2);height:56px}
+.cfg-lbl{font-size:9px;font-family:var(--mono);color:var(--mu);text-transform:uppercase;letter-spacing:.1em;white-space:nowrap}
+.cfg-seg input{background:transparent;border:none;outline:none;color:var(--neon);font-family:var(--mono);font-size:11px}
+.cfg-seg input.ip-in{width:125px}.cfg-seg input.port-in{width:44px}
+.mode-wrap{display:flex;gap:3px}
+.mode-btn{padding:4px 10px;border-radius:5px;font-size:10px;cursor:pointer;border:1px solid var(--rim2);
+  background:transparent;color:var(--mu);font-family:var(--mono);transition:all .15s}
+.mode-btn.on{background:var(--neondim);border-color:var(--neonborder);color:var(--neon);text-shadow:0 0 8px var(--neon)}
+
+.tok-chip{display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:20px;
+  border:1px solid var(--rim2);background:var(--ink2);font-size:11px;font-family:var(--mono);transition:all .3s}
+.tok-chip.ok{border-color:var(--neonborder);background:var(--neondim)}
+.tok-chip.err{border-color:var(--roseborder);background:var(--rosedim)}
+.tok-dot{width:6px;height:6px;border-radius:50%;background:var(--mu2);transition:all .3s;flex-shrink:0}
+.tok-chip.ok .tok-dot{background:var(--neon);box-shadow:0 0 6px var(--neon);animation:blink 2s infinite}
+.tok-chip.err .tok-dot{background:var(--rose)}
+.tok-chip.ok .tok-txt{color:var(--neon)}
+.tok-chip.err .tok-txt{color:var(--rose)}
+.tok-exp{color:var(--mu);font-size:10px}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+
+.av-btn{width:32px;height:32px;border-radius:50%;background:var(--ink3);border:1px solid var(--rim3);
+  display:flex;align-items:center;justify-content:center;font-size:11px;font-family:var(--syne);
+  font-weight:700;color:var(--neon);cursor:pointer;margin-left:auto;margin-right:8px;flex-shrink:0}
+
+/* ── ICON RAIL ── */
+.icon-rail{
+  background:var(--ink);border-right:1px solid var(--rim2);
+  display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:4px;overflow-y:auto;
+}
+.ir-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+  font-size:16px;cursor:pointer;transition:all .15s;border:1px solid transparent;position:relative}
+.ir-icon:hover{background:var(--ink3);border-color:var(--rim2)}
+.ir-icon.on{background:var(--neondim);border-color:var(--neonborder)}
+.ir-icon.on::after{content:'';position:absolute;right:-1px;top:25%;bottom:25%;width:2px;
+  background:var(--neon);border-radius:2px 0 0 2px;box-shadow:0 0 6px var(--neon)}
+.ir-sep{width:24px;height:1px;background:var(--rim2);margin:4px 0}
+
+/* ── SIDEBAR ── */
+.sidebar{
+  background:var(--ink1);border-right:1px solid var(--rim2);overflow-y:auto;
+  display:flex;flex-direction:column;
+}
+.sb-search{padding:12px;border-bottom:1px solid var(--rim2)}
+.sb-search-inner{display:flex;align-items:center;gap:8px;background:var(--ink2);
+  border:1px solid var(--rim2);border-radius:var(--r8);padding:7px 11px;
+  transition:border-color .15s}
+.sb-search-inner:focus-within{border-color:var(--neonborder)}
+.sb-search-inner input{background:transparent;border:none;outline:none;color:var(--tx);
+  font-family:var(--body);font-size:13px;width:100%}
+.sb-search-inner input::placeholder{color:var(--mu)}
+.sb-search-inner span{color:var(--mu);font-size:12px}
+
+.sb-section{padding:0 8px;margin:8px 0}
+.sb-lbl{font-size:9px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.12em;
+  color:var(--mu2);padding:8px 8px 4px;font-weight:400}
+.ni{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--r8);
+  cursor:pointer;font-size:12.5px;color:var(--tx2);transition:all .15s;
+  border:1px solid transparent;margin-bottom:1px;position:relative}
+.ni:hover{background:var(--ink3);color:var(--tx)}
+.ni.on{background:var(--ink3);color:var(--neon);border-color:var(--rim2)}
+.ni.on::before{content:'';position:absolute;left:-1px;top:20%;bottom:20%;width:2px;
+  background:var(--neon);border-radius:0 2px 2px 0;box-shadow:0 0 8px var(--neon)}
+.ni-ic{width:22px;height:22px;border-radius:6px;background:var(--ink2);display:flex;
+  align-items:center;justify-content:center;font-size:12px;flex-shrink:0;transition:background .15s}
+.ni.on .ni-ic{background:var(--neondim)}
+.ni-txt{flex:1;font-size:12.5px}
+.ni-badge{font-family:var(--mono);font-size:9px;background:var(--ink2);padding:2px 5px;
+  border-radius:4px;color:var(--mu);flex-shrink:0}
+.ni-live{width:5px;height:5px;border-radius:50%;background:var(--neon);box-shadow:0 0 4px var(--neon);flex-shrink:0}
+
+.sb-footer{margin-top:auto;padding:12px;border-top:1px solid var(--rim2)}
+.sb-stat{display:flex;justify-content:space-between;margin-bottom:4px}
+.sb-stat-k{font-size:9px;font-family:var(--mono);color:var(--mu);text-transform:uppercase}
+.sb-stat-v{font-family:var(--mono);font-size:9px;color:var(--neon2)}
+.sb-arch{font-size:10px;color:var(--mu2);line-height:1.7;margin-top:8px;font-family:var(--mono)}
+.sb-arch span{color:var(--neon);font-size:9px}
+
+/* ── MAIN ── */
+.main{overflow-y:auto;background:var(--ink);position:relative}
+.page{display:none;padding:24px 28px;min-height:calc(100vh - 56px);animation:pageIn .18s ease}
+.page.on{display:block}
+@keyframes pageIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* ── PAGE HEADER ── */
+.ph{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:22px}
+.ph-left h2{font-family:var(--syne);font-size:24px;font-weight:800;letter-spacing:-.03em;margin-bottom:3px;line-height:1.1}
+.ph-left h2 em{color:var(--neon);font-style:normal;text-shadow:0 0 20px var(--neon)55}
+.ph-left p{font-size:12px;color:var(--tx2);line-height:1.5;font-family:var(--mono)}
+.ph-right{display:flex;gap:8px;align-items:center}
+.route-pill{font-family:var(--mono);font-size:10px;color:var(--mu);background:var(--ink2);
+  border:1px solid var(--rim2);padding:4px 12px;border-radius:20px}
+
+/* ── STAT CARDS ── */
+.stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+.stat{background:var(--ink1);border:1px solid var(--rim2);border-radius:var(--r12);
+  padding:14px 16px;position:relative;overflow:hidden;transition:border-color .2s;cursor:default}
+.stat:hover{border-color:var(--rim3)}
+.stat .s-ico{position:absolute;right:12px;top:10px;font-size:20px;opacity:.12}
+.stat .s-lbl{font-size:9px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--mu);margin-bottom:8px}
+.stat .s-val{font-family:var(--syne);font-size:24px;font-weight:700;line-height:1;margin-bottom:4px}
+.stat .s-sub{font-size:10px;font-family:var(--mono);color:var(--mu)}
+.stat.neon{border-color:var(--neonborder)}.stat.neon .s-val{color:var(--neon);text-shadow:0 0 16px var(--neon)66}
+.stat.gold{border-color:var(--goldborder)}.stat.gold .s-val{color:var(--gold)}
+.stat.rose{border-color:var(--roseborder)}.stat.rose .s-val{color:var(--rose)}
+.stat.sky{border-color:var(--skyborder)}.stat.sky .s-val{color:var(--sky)}
+/* glow border on hover */
+.stat::before{content:'';position:absolute;inset:0;border-radius:var(--r12);opacity:0;transition:opacity .3s;
+  box-shadow:inset 0 0 30px var(--neon)0a}
+.stat:hover::before{opacity:1}
+
+/* ── SERVICE GRID ── */
+.svc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px}
+.svc{background:var(--ink1);border:1px solid var(--rim2);border-radius:var(--r12);
+  padding:16px;cursor:pointer;transition:all .2s;position:relative;overflow:hidden}
+.svc::after{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--c,transparent)}
+.svc:hover{border-color:var(--rim3);transform:translateY(-2px);background:var(--ink2)}
+.svc-head{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+.svc-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;box-shadow:0 0 6px currentColor}
+.svc-name{font-family:var(--syne);font-size:13px;font-weight:600;flex:1}
+.svc-port{font-family:var(--mono);font-size:9px;color:var(--mu);background:var(--ink3);
+  padding:2px 7px;border-radius:20px}
+.svc-desc{font-size:11px;color:var(--tx2);line-height:1.55;margin-bottom:10px}
+.svc-foot{display:flex;align-items:center;justify-content:space-between}
+.svc-eps{font-size:10px;color:var(--mu);font-family:var(--mono)}.svc-eps b{color:var(--neon2)}
+.svc-arr{font-size:11px;color:var(--mu);transition:all .2s}
+.svc:hover .svc-arr{color:var(--neon);transform:translateX(3px)}
+
+/* ── ACTIVITY ── */
+.act-section{background:var(--ink1);border:1px solid var(--rim2);border-radius:var(--r12);padding:16px}
+.act-section h3{font-size:11px;font-family:var(--mono);font-weight:400;color:var(--tx2);
+  margin-bottom:12px;display:flex;align-items:center;gap:8px;text-transform:uppercase;letter-spacing:.1em}
+.act-section h3::after{content:'';flex:1;height:1px;background:var(--rim2)}
+.act-empty{text-align:center;padding:24px;color:var(--mu);font-size:12px;font-family:var(--mono)}
+.act-item{display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--rim)}
+.act-item:last-child{border-bottom:none}
+.act-ic{width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0}
+.act-ic.ok{background:var(--neondim)}.act-ic.err{background:var(--rosedim)}.act-ic.info{background:var(--skydim)}
+.act-body{flex:1;min-width:0}
+.act-title{font-size:12px;color:var(--tx2);margin-bottom:1px;font-family:var(--mono)}
+.act-meta{font-size:10px;color:var(--mu);font-family:var(--mono)}
+.act-code{font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:20px}
+.ac-2{background:var(--neondim);color:var(--neon);border:1px solid var(--neonborder)}
+.ac-4{background:var(--golddim);color:var(--gold);border:1px solid var(--goldborder)}
+.ac-5{background:var(--rosedim);color:var(--rose);border:1px solid var(--roseborder)}
+
+/* ── BANKING LAYOUT ── */
+.b-layout{display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:start}
+
+/* ── TABS ── */
+.tabs{display:flex;gap:2px;background:var(--ink1);border:1px solid var(--rim2);border-radius:var(--r10);
+  padding:3px;width:fit-content;margin-bottom:16px}
+.tab{padding:6px 16px;border-radius:7px;cursor:pointer;font-size:12px;font-family:var(--mono);
+  color:var(--mu);transition:all .15s;display:flex;align-items:center;gap:5px}
+.tab:hover{color:var(--tx2)}
+.tab.on{background:var(--ink3);color:var(--neon);box-shadow:0 0 12px var(--neon)18}
+.tc{display:none}.tc.on{display:block;animation:pageIn .15s ease}
+
+/* ── FORM CARD ── */
+.fc{background:var(--ink1);border:1px solid var(--rim2);border-radius:var(--r12);overflow:hidden;margin-bottom:14px}
+.fc-head{padding:14px 18px;border-bottom:1px solid var(--rim2);display:flex;align-items:center;gap:9px}
+.fc-icon{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px}
+.fc-title{font-family:var(--syne);font-size:14px;font-weight:600;flex:1}
+.method{font-family:var(--mono);font-size:9px;font-weight:700;padding:3px 7px;border-radius:4px}
+.m-post{background:var(--skydim);color:var(--sky)}.m-get{background:var(--neondim);color:var(--neon)}
+.m-put{background:var(--golddim);color:var(--gold)}.m-delete{background:var(--rosedim);color:var(--rose)}
+.fc-body{padding:16px 18px}
+
+/* ── FORM ELEMENTS ── */
+.fr{margin-bottom:12px}
+.fr label{display:block;font-size:9px;font-family:var(--mono);text-transform:uppercase;
+  letter-spacing:.08em;color:var(--mu);margin-bottom:4px}
+.fr input,.fr select,.fr textarea{
+  width:100%;background:var(--ink2);border:1px solid var(--rim2);border-radius:var(--r8);
+  padding:8px 12px;color:var(--tx);font-family:var(--mono);font-size:13px;outline:none;transition:all .2s}
+.fr input:focus,.fr select:focus,.fr textarea:focus{border-color:var(--neonborder);background:var(--ink3);
+  box-shadow:0 0 0 3px var(--neon)0a}
+.fr input::placeholder{color:var(--mu2)}
+.fr select option{background:var(--ink2)}
+.fr-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fr-hint{font-size:10px;color:var(--mu2);font-family:var(--mono);margin-top:3px}
+
+/* ── BUTTONS ── */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border-radius:var(--r8);
+  border:none;font-family:var(--mono);font-size:12px;font-weight:700;cursor:pointer;transition:all .18s;
+  white-space:nowrap;text-transform:uppercase;letter-spacing:.04em}
+.btn-primary{background:var(--neon);color:var(--ink);box-shadow:0 0 20px var(--neon)33}
+.btn-primary:hover{background:var(--neon2);transform:translateY(-1px);box-shadow:0 4px 20px var(--neon)44}
+.btn-ghost{background:transparent;border:1px solid var(--rim3);color:var(--tx2)}
+.btn-ghost:hover{border-color:var(--neonborder);color:var(--neon);background:var(--neondim)}
+.btn-danger{background:var(--rosedim);border:1px solid var(--roseborder);color:var(--rose)}
+.btn-danger:hover{background:var(--rose);color:#fff;border-color:var(--rose)}
+.btn-sm{padding:5px 12px;font-size:10px}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+
+/* ── RESPONSE ── */
+.res{border:1px solid var(--rim2);border-radius:var(--r10);overflow:hidden;background:var(--ink2);margin-top:12px}
+.res-head{padding:7px 12px;display:flex;align-items:center;gap:7px;border-bottom:1px solid var(--rim);background:var(--ink3)}
+.res-body{padding:10px 12px;font-family:var(--mono);font-size:11px;line-height:1.75;
+  white-space:pre-wrap;max-height:240px;overflow-y:auto;color:var(--tx2)}
+.pill{padding:3px 8px;border-radius:20px;font-family:var(--mono);font-size:10px;font-weight:700}
+.p2{background:var(--neondim);color:var(--neon);border:1px solid var(--neonborder)}
+.p4{background:var(--golddim);color:var(--gold);border:1px solid var(--goldborder)}
+.p5{background:var(--rosedim);color:var(--rose);border:1px solid var(--roseborder)}
+.res-ms{font-family:var(--mono);font-size:10px;color:var(--mu);margin-left:auto}
+
+/* ── DATA CARDS ── */
+.d-card{background:var(--ink2);border:1px solid var(--rim2);border-radius:var(--r12);overflow:hidden;margin-bottom:12px}
+.d-card-h{padding:16px 18px;background:var(--ink3);border-bottom:1px solid var(--rim2);position:relative}
+.d-card-h::after{content:'◈';position:absolute;right:14px;bottom:-6px;font-size:52px;opacity:.04;color:var(--neon)}
+.d-name{font-family:var(--syne);font-size:18px;font-weight:700;margin-bottom:2px}
+.d-meta{font-size:11px;font-family:var(--mono);color:var(--mu);display:flex;align-items:center;gap:10px}
+.d-badge{font-size:9px;font-family:var(--mono);padding:2px 8px;border-radius:20px;
+  background:var(--neondim);color:var(--neon);border:1px solid var(--neonborder)}
+.d-body{padding:14px 18px}
+.d-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.d-item{background:var(--ink1);border:1px solid var(--rim);border-radius:var(--r8);padding:9px 12px}
+.d-item.span2{grid-column:1/-1}
+.d-item .di-l{font-size:9px;font-family:var(--mono);color:var(--mu);text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px}
+.d-item .di-v{font-family:var(--mono);font-size:12px;color:var(--tx)}
+
+/* ── LOAN / CARD WIDGET ── */
+.fin{background:var(--ink2);border:1px solid var(--rim2);border-radius:var(--r12);overflow:hidden;margin-bottom:12px}
+.fin-h{padding:14px 18px;background:var(--ink3);border-bottom:1px solid var(--rim2);display:flex;justify-content:space-between;align-items:flex-start}
+.fin-type{font-family:var(--syne);font-size:16px;font-weight:700}
+.fin-num{font-family:var(--mono);font-size:10px;color:var(--mu);margin-top:2px}
+.fin-b{padding:14px 18px}
+.prog-wrap{margin-bottom:12px}
+.prog-labels{display:flex;justify-content:space-between;margin-bottom:5px}
+.prog-labels span{font-size:10px;font-family:var(--mono);color:var(--mu)}
+.prog-labels b{font-size:11px;font-weight:700}
+.prog-bar{height:4px;background:var(--rim2);border-radius:2px;overflow:hidden}
+.prog-fill{height:100%;border-radius:2px;transition:width .6s ease}
+.amt-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.amt-item{text-align:center;background:var(--ink1);border:1px solid var(--rim);border-radius:var(--r8);padding:9px 6px}
+.amt-item .ai-l{font-size:9px;font-family:var(--mono);color:var(--mu);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
+.amt-item .ai-v{font-family:var(--syne);font-size:15px;font-weight:700}
+.ai-v.neon{color:var(--neon)}.ai-v.gold{color:var(--gold)}.ai-v.rose{color:var(--rose)}.ai-v.sky{color:var(--sky)}
+
+/* ── C360 PROFILE ── */
+.c360-hdr{background:var(--ink1);border:1px solid var(--neonborder);border-radius:var(--r12);
+  padding:18px;margin-bottom:14px;display:flex;align-items:center;gap:14px;
+  box-shadow:0 0 30px var(--neon)0a}
+.c360-av{width:48px;height:48px;border-radius:50%;background:var(--neondim);
+  border:2px solid var(--neonborder);display:flex;align-items:center;justify-content:center;
+  font-family:var(--syne);font-size:18px;font-weight:800;color:var(--neon);flex-shrink:0;
+  box-shadow:0 0 16px var(--neon)33}
+.c360-name{font-family:var(--syne);font-size:18px;font-weight:700;margin-bottom:3px}
+.c360-row{font-size:11px;font-family:var(--mono);color:var(--tx2);display:flex;gap:14px}
+
+/* ── GW INFO ── */
+.gw-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.gw-panel{background:var(--ink1);border:1px solid var(--rim2);border-radius:var(--r12);overflow:hidden}
+.gw-head{padding:11px 14px;border-bottom:1px solid var(--rim2);display:flex;align-items:center;gap:7px;
+  font-size:12px;font-family:var(--syne);font-weight:600}
+.gw-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;box-shadow:0 0 5px currentColor}
+.gw-body{padding:10px}
+.gw-btn{width:100%;display:flex;align-items:center;gap:7px;padding:8px 10px;border-radius:var(--r8);
+  border:1px solid var(--rim2);background:transparent;color:var(--tx2);font-family:var(--mono);
+  font-size:11px;cursor:pointer;transition:all .15s;margin-bottom:5px;text-align:left}
+.gw-btn:hover{background:var(--ink3);border-color:var(--neonborder);color:var(--neon)}
+.gw-method{font-family:var(--mono);font-size:8px;padding:2px 5px;border-radius:3px;
+  background:var(--neondim);color:var(--neon);flex-shrink:0}
+
+/* ── TOAST ── */
+#toast-wrap{position:fixed;bottom:18px;right:18px;z-index:9999;display:flex;flex-direction:column;gap:6px;align-items:flex-end;pointer-events:none}
+.toast{background:var(--ink3);border:1px solid var(--rim3);border-radius:var(--r10);
+  padding:10px 14px;font-size:12px;font-family:var(--mono);display:flex;align-items:center;gap:8px;
+  animation:toastIn .25s ease;box-shadow:0 8px 32px #00000099;max-width:280px;pointer-events:all}
+@keyframes toastIn{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:none}}
+.toast.ok{border-color:var(--neonborder)}.toast.err{border-color:var(--roseborder)}.toast.info{border-color:var(--skyborder)}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--rim3);border-radius:2px}
+::-webkit-scrollbar-thumb:hover{background:var(--rim4)}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- TOPBAR -->
+<header class="topbar">
+  <div class="brand-strip">
+    <div class="brand-logo">🏦</div>
+  </div>
+  <div class="brand-text">
+    <div class="brand-name">EAZYBANK</div>
+    <div class="brand-sub">Command Center</div>
+  </div>
+
+  <div class="cfg-row">
+    <div class="cfg-seg">
+      <span class="cfg-lbl">EC2</span>
+      <input class="ip-in" id="cfg-ip" value="13.233.158.149" spellcheck="false" onchange="applyConfig()"/>
+    </div>
+    <div class="cfg-seg">
+      <span class="cfg-lbl">Mode</span>
+      <div class="mode-wrap">
+        <button class="mode-btn on" id="btn-nginx" onclick="setMode('nginx')">NGINX</button>
+        <button class="mode-btn" id="btn-direct" onclick="setMode('direct')">DIRECT</button>
+      </div>
+    </div>
+    <div class="cfg-seg" id="port-seg" style="display:none">
+      <span class="cfg-lbl">GW</span>
+      <input class="port-in" id="cfg-gwport" value="30564" onchange="applyConfig()"/>
+      <span class="cfg-lbl" style="margin-left:10px">KC</span>
+      <input class="port-in" id="cfg-kcport" value="31479" onchange="applyConfig()"/>
+    </div>
+    <div class="tok-chip" id="tokChip">
+      <div class="tok-dot"></div>
+      <span class="tok-txt" id="tokTxt">Initializing...</span>
+      <span class="tok-exp" id="tokExp"></span>
+    </div>
+    <div class="av-btn">SR</div>
+  </div>
+</header>
+
+<!-- ICON RAIL -->
+<div class="icon-rail">
+  <div class="ir-icon on" onclick="nav('dash',this)" title="Dashboard">◈</div>
+  <div class="ir-sep"></div>
+  <div class="ir-icon" onclick="nav('accounts',this)" title="Accounts">🏦</div>
+  <div class="ir-icon" onclick="nav('loans',this)" title="Loans">💳</div>
+  <div class="ir-icon" onclick="nav('cards',this)" title="Cards">💰</div>
+  <div class="ir-sep"></div>
+  <div class="ir-icon" onclick="nav('customer',this)" title="Customer 360">👤</div>
+  <div class="ir-icon" onclick="nav('gateway',this)" title="Gateway Info">⚡</div>
+</div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sb-search">
+    <div class="sb-search-inner">
+      <span>⌕</span>
+      <input placeholder="Search pages..." oninput="filterNav(this.value)"/>
+    </div>
+  </div>
+  <div class="sb-section">
+    <div class="sb-lbl">Overview</div>
+    <div class="ni on" onclick="nav2('dash',this)" data-k="dashboard">
+      <div class="ni-ic">◈</div><div class="ni-txt">Dashboard</div>
+    </div>
+    <div class="sb-lbl">Banking</div>
+    <div class="ni" onclick="nav2('accounts',this)" data-k="accounts">
+      <div class="ni-ic">🏦</div><div class="ni-txt">Accounts</div>
+      <span class="ni-badge">8080</span><div class="ni-live"></div>
+    </div>
+    <div class="ni" onclick="nav2('loans',this)" data-k="loans">
+      <div class="ni-ic">💳</div><div class="ni-txt">Loans</div>
+      <span class="ni-badge">8090</span><div class="ni-live"></div>
+    </div>
+    <div class="ni" onclick="nav2('cards',this)" data-k="cards">
+      <div class="ni-ic">💰</div><div class="ni-txt">Cards</div>
+      <span class="ni-badge">9000</span><div class="ni-live"></div>
+    </div>
+    <div class="sb-lbl">Analytics</div>
+    <div class="ni" onclick="nav2('customer',this)" data-k="customer 360">
+      <div class="ni-ic">👤</div><div class="ni-txt">Customer 360°</div>
+    </div>
+    <div class="ni" onclick="nav2('gateway',this)" data-k="gateway info">
+      <div class="ni-ic">⚡</div><div class="ni-txt">Gateway Info</div>
+    </div>
+  </div>
+  <div class="sb-footer">
+    <div class="sb-stat"><span class="sb-stat-k">Gateway</span><span class="sb-stat-v" id="sf-gw">nginx:30080</span></div>
+    <div class="sb-stat"><span class="sb-stat-k">Keycloak</span><span class="sb-stat-v" id="sf-kc">nginx:30080</span></div>
+    <div class="sb-arch">Browser→<span>Nginx</span>→Gateway→Svc</div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+
+<!-- DASHBOARD -->
+<div id="page-dash" class="page on">
+  <div class="ph">
+    <div class="ph-left">
+      <h2>Welcome, <em>EazyBank</em></h2>
+      <p>Production · Nginx → Spring Cloud Gateway → K8s Microservices · EC2 <span id="dash-ip" style="color:var(--neon)">13.233.158.149</span></p>
+    </div>
+  </div>
+  <div class="stat-row">
+    <div class="stat neon"><div class="s-ico">🌐</div><div class="s-lbl">Frontend</div><div class="s-val">NGINX</div><div class="s-sub">2 replicas · :30080</div></div>
+    <div class="stat sky"><div class="s-ico">⚡</div><div class="s-lbl">API Gateway</div><div class="s-val">ClusterIP</div><div class="s-sub">gatewayserver:8072</div></div>
+    <div class="stat gold"><div class="s-ico">🔐</div><div class="s-lbl">Auth Status</div><div class="s-val" id="dash-auth">—</div><div class="s-sub" id="dash-auth-sub">Keycloak JWT</div></div>
+    <div class="stat"><div class="s-ico">☸️</div><div class="s-lbl">K8s Services</div><div class="s-val">7</div><div class="s-sub">accounts·loans·cards·gw·cfg·eureka·msg</div></div>
+  </div>
+  <div class="svc-grid">
+    <div class="svc" style="--c:var(--neon)" onclick="nav2('accounts',document.querySelectorAll('.ni')[1])">
+      <div class="svc-head"><div class="svc-dot" style="color:var(--neon);background:var(--neon)"></div><div class="svc-name">Accounts Service</div><div class="svc-port">:8080</div></div>
+      <div class="svc-desc">Create and manage bank accounts. Supports savings, current and salary accounts with branch address management.</div>
+      <div class="svc-foot"><span class="svc-eps"><b>6</b> endpoints · CRUD + info</span><span class="svc-arr">→</span></div>
+    </div>
+    <div class="svc" style="--c:var(--sky)" onclick="nav2('loans',document.querySelectorAll('.ni')[2])">
+      <div class="svc-head"><div class="svc-dot" style="color:var(--sky);background:var(--sky)"></div><div class="svc-name">Loans Service</div><div class="svc-port">:8090</div></div>
+      <div class="svc-desc">Home, vehicle and personal loan management. Track repayment with outstanding amounts and payment history.</div>
+      <div class="svc-foot"><span class="svc-eps"><b>5</b> endpoints · CRUD + info</span><span class="svc-arr">→</span></div>
+    </div>
+    <div class="svc" style="--c:var(--gold)" onclick="nav2('cards',document.querySelectorAll('.ni')[3])">
+      <div class="svc-head"><div class="svc-dot" style="color:var(--gold);background:var(--gold)"></div><div class="svc-name">Cards Service</div><div class="svc-port">:9000</div></div>
+      <div class="svc-desc">Credit and debit card management. Monitor spending limits, utilization percentage and available credit in real time.</div>
+      <div class="svc-foot"><span class="svc-eps"><b>5</b> endpoints · CRUD + info</span><span class="svc-arr">→</span></div>
+    </div>
+    <div class="svc" style="--c:var(--lime)" onclick="nav2('customer',document.querySelectorAll('.ni')[4])">
+      <div class="svc-head"><div class="svc-dot" style="color:var(--lime);background:var(--lime)"></div><div class="svc-name">Customer 360°</div><div class="svc-port">gateway</div></div>
+      <div class="svc-desc">Aggregated profile — single gateway call returns account + loan + card via Feign client orchestration.</div>
+      <div class="svc-foot"><span class="svc-eps"><b>1</b> endpoint · Feign</span><span class="svc-arr">→</span></div>
+    </div>
+    <div class="svc" style="--c:var(--mu)" onclick="nav2('gateway',document.querySelectorAll('.ni')[5])">
+      <div class="svc-head"><div class="svc-dot" style="color:var(--mu);background:var(--mu)"></div><div class="svc-name">Gateway Info</div><div class="svc-port">:8072</div></div>
+      <div class="svc-desc">contact-info, build-info and java-version endpoints for all services via Spring Cloud Gateway.</div>
+      <div class="svc-foot"><span class="svc-eps"><b>9</b> info endpoints</span><span class="svc-arr">→</span></div>
+    </div>
+    <div class="svc" style="--c:var(--rose)">
+      <div class="svc-head"><div class="svc-dot" style="color:var(--rose);background:var(--rose)"></div><div class="svc-name">Keycloak Auth</div><div class="svc-port" id="dash-kc-p">:31479</div></div>
+      <div class="svc-desc">OAuth2 client credentials. Token auto-fetched on load and refreshed every 50s. All calls authenticated automatically.</div>
+      <div class="svc-foot"><span id="dash-kc-s" style="font-size:10px;font-family:var(--mono);color:var(--mu)">Initializing...</span></div>
+    </div>
+  </div>
+  <div class="act-section">
+    <h3>Recent Activity</h3>
+    <div id="act-feed"><div class="act-empty">// No activity yet — make an API call to see it here</div></div>
+  </div>
+</div>
+
+<!-- ACCOUNTS -->
+<div id="page-accounts" class="page">
+  <div class="ph">
+    <div class="ph-left"><h2><em>Accounts</em></h2><p>GET/POST/PUT/DELETE · /eazybank/accounts/api</p></div>
+    <div class="ph-right"><span class="route-pill">eazybank-ms/accounts:8080</span></div>
+  </div>
+  <div class="b-layout">
+    <div>
+      <div class="tabs">
+        <div class="tab on" onclick="stab('ac','create',this)">⚡ Create</div>
+        <div class="tab" onclick="stab('ac','fetch',this)">⌕ Fetch</div>
+        <div class="tab" onclick="stab('ac','update',this)">✎ Update</div>
+        <div class="tab" onclick="stab('ac','delete',this)">✕ Delete</div>
+      </div>
+      <div id="ac-create" class="tc on">
+        <div class="fc">
+          <div class="fc-head"><div class="fc-icon" style="background:var(--skydim)">⚡</div><div class="fc-title">Create New Account</div><span class="method m-post">POST</span></div>
+          <div class="fc-body">
+            <div class="fr"><label>Full Name</label><input id="ac-name" placeholder="e.g. Madan Reddy"/></div>
+            <div class="fr"><label>Email</label><input id="ac-email" type="email" placeholder="e.g. user@eazybytes.com"/></div>
+            <div class="fr"><label>Mobile Number</label><input id="ac-mobile" placeholder="e.g. 4354437687"/><div class="fr-hint">// 10-digit · used as customer ID</div></div>
+            <div class="btn-row">
+              <button class="btn btn-primary" onclick="acCreate()">⚡ Create Account</button>
+              <button class="btn btn-ghost btn-sm" onclick="fillDemo()">Fill Demo</button>
+            </div>
+            <div id="ac-create-res"></div>
+          </div>
+        </div>
+      </div>
+      <div id="ac-fetch" class="tc">
+        <div class="fc">
+          <div class="fc-head"><div class="fc-icon" style="background:var(--neondim)">⌕</div><div class="fc-title">Fetch Account</div><span class="method m-get">GET</span></div>
+          <div class="fc-body">
+            <div class="fr"><label>Mobile Number</label><input id="ac-fetch-m" placeholder="e.g. 4354437687"/></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="acFetch()">⌕ Fetch Account</button></div>
+            <div id="ac-fetch-res"></div>
+          </div>
+        </div>
+        <div id="ac-fetch-disp"></div>
+      </div>
+      <div id="ac-update" class="tc">
+        <div class="fc">
+          <div class="fc-head"><div class="fc-icon" style="background:var(--golddim)">✎</div><div class="fc-title">Update Account</div><span class="method m-put">PUT</span></div>
+          <div class="fc-body">
+            <div class="fr-2">
+              <div class="fr"><label>Full Name</label><input id="au-name" placeholder="Updated name"/></div>
+              <div class="fr"><label>Mobile</label><input id="au-mobile" placeholder="4354437687"/></div>
+            </div>
+            <div class="fr"><label>Email</label><input id="au-email" placeholder="user@eazybytes.com"/></div>
+            <div class="fr-2">
+              <div class="fr"><label>Account Number</label><input id="au-accno" placeholder="1105557729"/></div>
+              <div class="fr"><label>Account Type</label><select id="au-type"><option>Savings</option><option>Current</option><option>Salary</option></select></div>
+            </div>
+            <div class="fr"><label>Branch Address</label><input id="au-addr" placeholder="123 Main Street, New York"/></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="acUpdate()">💾 Update</button></div>
+            <div id="ac-update-res"></div>
+          </div>
+        </div>
+      </div>
+      <div id="ac-delete" class="tc">
+        <div class="fc">
+          <div class="fc-head"><div class="fc-icon" style="background:var(--rosedim)">✕</div><div class="fc-title">Delete Account</div><span class="method m-delete">DELETE</span></div>
+          <div class="fc-body">
+            <div class="fr"><label>Mobile Number</label><input id="ad-mobile" placeholder="e.g. 4354437687"/></div>
+            <div class="btn-row"><button class="btn btn-danger" onclick="acDelete()">✕ Delete Account</button></div>
+            <div id="ac-delete-res"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="fc">
+        <div class="fc-head"><div class="fc-icon" style="background:var(--neondim)">ℹ</div><div class="fc-title">Service Info</div></div>
+        <div class="fc-body">
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/accounts/api/contact-info','ac-info')">contact-info</button>
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/accounts/api/build-info','ac-info')">build-info</button>
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/accounts/api/java-version','ac-info')">java-version</button>
+          </div>
+          <div id="ac-info"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- LOANS -->
+<div id="page-loans" class="page">
+  <div class="ph">
+    <div class="ph-left"><h2><em>Loans</em></h2><p>GET/POST/PUT/DELETE · /eazybank/loans/api</p></div>
+    <div class="ph-right"><span class="route-pill">eazybank-ms/loans:8090</span></div>
+  </div>
+  <div class="b-layout">
+    <div>
+      <div class="tabs">
+        <div class="tab on" onclick="stab('ln','create',this)">⚡ Create</div>
+        <div class="tab" onclick="stab('ln','fetch',this)">⌕ Fetch</div>
+        <div class="tab" onclick="stab('ln','update',this)">✎ Update</div>
+        <div class="tab" onclick="stab('ln','delete',this)">✕ Delete</div>
+      </div>
+      <div id="ln-create" class="tc on">
+        <div class="fc">
+          <div class="fc-head"><div class="fc-icon" style="background:var(--skydim)">💳</div><div class="fc-title">Create Loan</div><span class="method m-post">POST</span></div>
+          <div class="fc-body">
+            <div class="fr"><label>Mobile Number</label><input id="ln-mobile" placeholder="e.g. 4354437687"/><div class="fr-hint">// system auto-generates loan number, type and amounts</div></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="lnCreate()">⚡ Create Loan</button></div>
+            <div id="ln-create-res"></div>
+          </div>
+        </div>
+      </div>
+      <div id="ln-fetch" class="tc">
+        <div class="fc">
+          <div class="fc-head"><div class="fc-icon" style="background:var(--neondim)">⌕</div><div class="fc-title">Fetch Loan</div><span class="method m-get">GET</span></div>
+          <div class="fc-body">
+            <div class="fr"><label>Mobile Number</label><input id="ln-fetch-m" placeholder="e.g. 4354437687"/></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="lnFetch()">⌕ Fetch Loan</button></div>
+            <div id="ln-fetch-res"></div>
+          </div>
+        </div>
+        <div id="ln-fetch-disp"></div>
+      </div>
+      <div id="ln-update" class="tc">
+        <div class="fc">
+          <div class="fc-head"><div class="fc-icon" style="background:var(--golddim)">✎</div><div class="fc-title">Update Loan</div><span class="method m-put">PUT</span></div>
+          <div class="fc-body">
+            <div class="fr-2">
+              <div class="fr"><label>Mobile</label><input id="lu-mobile" placeholder="4354437687"/></div>
+              <div class="fr"><label>Loan Number</label><input id="lu-num" placeholder="10071469799154"/></div>
+            </div>
+            <div class="fr"><label>Loan Type</label><select id="lu-type"><option>Home Loan</option><option>Vehicle Loan</option><option>Personal Loan</option><option>Education Loan</option></select></div>
+            <div class="fr-2">
+              <div class="fr"><label>Total Loan (₹)</label><input id="lu-total" type="number" placeholder="100000"/></div>
+              <div class="fr"><label>Amount Paid (₹)</label><input id="lu-paid" type="number" placeholder="10000"/></div>
+            </div>
+            <div class="fr"><label>Outstanding (₹)</label><input id="lu-out" type="number" placeholder="90000"/></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="lnUpdate()">💾 Update Loan</button></div>
+            <div id="ln-update-res"></div>
+          </div>
+        </div>
+      </div>
+      <div id="ln-delete" class="tc">
+        <div class="fc">
+          <div class="fc-head"><div class="fc-icon" style="background:var(--rosedim)">✕</div><div class="fc-title">Delete Loan</div><span class="method m-delete">DELETE</span></div>
+          <div class="fc-body">
+            <div class="fr"><label>Mobile Number</label><input id="ld-mobile" placeholder="e.g. 4354437687"/></div>
+            <div class="btn-row"><button class="btn btn-danger" onclick="lnDelete()">✕ Delete Loan</button></div>
+            <div id="ln-delete-res"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="fc">
+        <div class="fc-head"><div class="fc-icon" style="background:var(--skydim)">ℹ</div><div class="fc-title">Service Info</div></div>
+        <div class="fc-body">
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/loans/api/contact-info','ln-info')">contact-info</button>
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/loans/api/build-info','ln-info')">build-info</button>
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/loans/api/java-version','ln-info')">java-version</button>
+          </div>
+          <div id="ln-info"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CARDS -->
+<div id="page-cards" class="page">
+  <div class="ph">
+    <div class="ph-left"><h2><em>Cards</em></h2><p>GET/POST/PUT/DELETE · /eazybank/cards/api</p></div>
+    <div class="ph-right"><span class="route-pill">eazybank-ms/cards:9000</span></div>
+  </div>
+  <div class="b-layout">
+    <div>
+      <div class="tabs">
+        <div class="tab on" onclick="stab('cd','create',this)">⚡ Create</div>
+        <div class="tab" onclick="stab('cd','fetch',this)">⌕ Fetch</div>
+        <div class="tab" onclick="stab('cd','update',this)">✎ Update</div>
+        <div class="tab" onclick="stab('cd','delete',this)">✕ Delete</div>
+      </div>
+      <div id="cd-create" class="tc on">
+        <div class="fc">
+          <div class="fc-head"><div class="fc-icon" style="background:var(--skydim)">💰</div><div class="fc-title">Create Card</div><span class="method m-post">POST</span></div>
+          <div class="fc-body">
+            <div class="fr"><label>Mobile Number</label><input id="cd-mobile" placeholder="e.g. 4354437687"/><div class="fr-hint">// system auto-generates card number and sets default limits</div></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="cdCreate()">⚡ Create Card</button></div>
+            <div id="cd-create-res"></div>
+          </div>
+        </div>
+      </div>
+      <div id="cd-fetch" class="tc">
+        <div class="fc">
+          <div class="fc-head"><div class="fc-icon" style="background:var(--neondim)">⌕</div><div class="fc-title">Fetch Card</div><span class="method m-get">GET</span></div>
+          <div class="fc-body">
+            <div class="fr"><label>Mobile Number</label><input id="cd-fetch-m" placeholder="e.g. 4354437687"/></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="cdFetch()">⌕ Fetch Card</button></div>
+            <div id="cd-fetch-res"></div>
+          </div>
+        </div>
+        <div id="cd-fetch-disp"></div>
+      </div>
+      <div id="cd-update" class="tc">
+        <div class="fc">
+          <div class="fc-head"><div class="fc-icon" style="background:var(--golddim)">✎</div><div class="fc-title">Update Card</div><span class="method m-put">PUT</span></div>
+          <div class="fc-body">
+            <div class="fr-2">
+              <div class="fr"><label>Mobile</label><input id="cu-mobile" placeholder="4354437687"/></div>
+              <div class="fr"><label>Card Number</label><input id="cu-num" placeholder="100107091026"/></div>
+            </div>
+            <div class="fr"><label>Card Type</label><select id="cu-type"><option>Credit Card</option><option>Debit Card</option></select></div>
+            <div class="fr-2">
+              <div class="fr"><label>Total Limit (₹)</label><input id="cu-total" type="number" placeholder="100000"/></div>
+              <div class="fr"><label>Amount Used (₹)</label><input id="cu-used" type="number" placeholder="10000"/></div>
+            </div>
+            <div class="fr"><label>Available (₹)</label><input id="cu-avail" type="number" placeholder="90000"/></div>
+            <div class="btn-row"><button class="btn btn-primary" onclick="cdUpdate()">💾 Update Card</button></div>
+            <div id="cd-update-res"></div>
+          </div>
+        </div>
+      </div>
+      <div id="cd-delete" class="tc">
+        <div class="fc">
+          <div class="fc-head"><div class="fc-icon" style="background:var(--rosedim)">✕</div><div class="fc-title">Delete Card</div><span class="method m-delete">DELETE</span></div>
+          <div class="fc-body">
+            <div class="fr"><label>Mobile Number</label><input id="cdd-mobile" placeholder="e.g. 4354437687"/></div>
+            <div class="btn-row"><button class="btn btn-danger" onclick="cdDelete()">✕ Delete Card</button></div>
+            <div id="cd-delete-res"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="fc">
+        <div class="fc-head"><div class="fc-icon" style="background:var(--golddim)">ℹ</div><div class="fc-title">Service Info</div></div>
+        <div class="fc-body">
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/cards/api/contact-info','cd-info')">contact-info</button>
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/cards/api/build-info','cd-info')">build-info</button>
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start" onclick="infoCall('/eazybank/cards/api/java-version','cd-info')">java-version</button>
+          </div>
+          <div id="cd-info"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CUSTOMER 360 -->
+<div id="page-customer" class="page">
+  <div class="ph">
+    <div class="ph-left"><h2>Customer <em>360°</em></h2><p>Aggregated profile · single gateway call via Feign client</p></div>
+    <div class="ph-right"><span class="route-pill">GET /eazybank/accounts/api/fetchCustomerDetails</span></div>
+  </div>
+  <div class="b-layout">
+    <div>
+      <div class="fc">
+        <div class="fc-head"><div class="fc-icon" style="background:var(--neondim)">👤</div><div class="fc-title">Fetch Full Profile</div><span class="method m-get">GET</span></div>
+        <div class="fc-body">
+          <div class="fr"><label>Mobile Number</label><input id="c3-mobile" placeholder="e.g. 4354437687"/><div class="fr-hint">// returns account + loan + card in one call</div></div>
+          <div class="btn-row"><button class="btn btn-primary" onclick="custFetch()">⌕ Fetch 360° Profile</button></div>
+          <div id="c3-res"></div>
+        </div>
+      </div>
+      <div id="c3-disp"></div>
+    </div>
+    <div>
+      <div class="fc">
+        <div class="fc-head"><div class="fc-icon" style="background:var(--neondim)">💡</div><div class="fc-title">How it works</div></div>
+        <div class="fc-body" style="font-size:12px;font-family:var(--mono);color:var(--tx2);line-height:1.8">
+          <p style="color:var(--neon);margin-bottom:8px">GET /api/fetchCustomerDetails</p>
+          <p style="margin-bottom:8px;color:var(--mu)">// Accounts → OpenFeign → Loans + Cards</p>
+          <p>Returns combined JSON — no client-side stitching needed.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- GATEWAY INFO -->
+<div id="page-gateway" class="page">
+  <div class="ph">
+    <div class="ph-left"><h2>Gateway <em>Info</em></h2><p>contact-info · build-info · java-version for all services</p></div>
+  </div>
+  <div class="gw-grid">
+    <div class="gw-panel">
+      <div class="gw-head"><div class="gw-dot" style="color:var(--neon);background:var(--neon)"></div>Accounts :8080</div>
+      <div class="gw-body">
+        <button class="gw-btn" onclick="infoCall('/eazybank/accounts/api/contact-info','gw-ac')"><span class="gw-method">GET</span>contact-info</button>
+        <button class="gw-btn" onclick="infoCall('/eazybank/accounts/api/build-info','gw-ac')"><span class="gw-method">GET</span>build-info</button>
+        <button class="gw-btn" onclick="infoCall('/eazybank/accounts/api/java-version','gw-ac')"><span class="gw-method">GET</span>java-version</button>
+        <div id="gw-ac"></div>
+      </div>
+    </div>
+    <div class="gw-panel">
+      <div class="gw-head"><div class="gw-dot" style="color:var(--sky);background:var(--sky)"></div>Loans :8090</div>
+      <div class="gw-body">
+        <button class="gw-btn" onclick="infoCall('/eazybank/loans/api/contact-info','gw-ln')"><span class="gw-method">GET</span>contact-info</button>
+        <button class="gw-btn" onclick="infoCall('/eazybank/loans/api/build-info','gw-ln')"><span class="gw-method">GET</span>build-info</button>
+        <button class="gw-btn" onclick="infoCall('/eazybank/loans/api/java-version','gw-ln')"><span class="gw-method">GET</span>java-version</button>
+        <div id="gw-ln"></div>
+      </div>
+    </div>
+    <div class="gw-panel">
+      <div class="gw-head"><div class="gw-dot" style="color:var(--gold);background:var(--gold)"></div>Cards :9000</div>
+      <div class="gw-body">
+        <button class="gw-btn" onclick="infoCall('/eazybank/cards/api/contact-info','gw-cd')"><span class="gw-method">GET</span>contact-info</button>
+        <button class="gw-btn" onclick="infoCall('/eazybank/cards/api/build-info','gw-cd')"><span class="gw-method">GET</span>build-info</button>
+        <button class="gw-btn" onclick="infoCall('/eazybank/cards/api/java-version','gw-cd')"><span class="gw-method">GET</span>java-version</button>
+        <div id="gw-cd"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</main>
+</div>
+<div id="toast-wrap"></div>
+
+<script>
+// ── CONFIG ──
+const _c = window.APP_CONFIG || {};
+window.CFG = {
+  EC2_IP: _c.ec2Ip || '13.233.158.149',
+  KC_REALM: 'master',
+  KC_CLIENT: _c.clientId || 'eazybank-callcenter-cc',
+  KC_SECRET: _c.clientSecret || '',
+  REFRESH_MS: _c.tokenRefreshInterval || 50000,
+  GW: '', KC: ''
+};
+let MODE = 'nginx';
+
+function setMode(m) {
+  MODE = m;
+  document.getElementById('btn-nginx').className = 'mode-btn' + (m==='nginx'?' on':'');
+  document.getElementById('btn-direct').className = 'mode-btn' + (m==='direct'?' on':'');
+  document.getElementById('port-seg').style.display = m==='direct'?'flex':'none';
+  applyConfig();
+}
+function applyConfig() {
+  const ip = document.getElementById('cfg-ip').value.trim();
+  const gp = document.getElementById('cfg-gwport').value.trim();
+  const kp = document.getElementById('cfg-kcport').value.trim();
+  document.getElementById('dash-ip').textContent = ip;
+  if (MODE==='nginx') {
+    CFG.GW = ''; CFG.KC = `/realms/${CFG.KC_REALM}/protocol/openid-connect/token`;
+    document.getElementById('sf-gw').textContent = 'nginx:30080';
+    document.getElementById('sf-kc').textContent = 'nginx:30080';
+  } else {
+    CFG.GW = `http://${ip}:${gp}`;
+    CFG.KC = `http://${ip}:${kp}/realms/${CFG.KC_REALM}/protocol/openid-connect/token`;
+    document.getElementById('sf-gw').textContent = `${ip}:${gp}`;
+    document.getElementById('sf-kc').textContent = `${ip}:${kp}`;
+    document.getElementById('dash-kc-p').textContent = `:${kp}`;
+  }
+  fetchToken();
+}
+
+// ── TOKEN ──
+let TOKEN = null, tokExp = 0;
+async function fetchToken() {
+  try {
+    const r = await fetch(CFG.KC, {
+      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:`grant_type=client_credentials&client_id=${CFG.KC_CLIENT}&client_secret=${CFG.KC_SECRET}&scope=openid profile email`
+    });
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    const d = await r.json();
+    TOKEN = d.access_token; tokExp = Date.now() + d.expires_in*1000;
+    setTokUI(true, d.expires_in);
+    document.getElementById('dash-auth').textContent = 'Active';
+    document.getElementById('dash-auth-sub').textContent = `JWT · expires ${d.expires_in}s`;
+    document.getElementById('dash-kc-s').innerHTML = '<span style="color:var(--neon)">✓ Token active</span> · refresh 50s';
+  } catch(e) {
+    TOKEN = null; setTokUI(false,0);
+    document.getElementById('dash-auth').textContent = 'Error';
+    document.getElementById('dash-kc-s').innerHTML = `<span style="color:var(--rose)">✗ ${e.message}</span>`;
+  }
+}
+function setTokUI(ok, exp) {
+  const c = document.getElementById('tokChip');
+  c.className = 'tok-chip ' + (ok?'ok':'err');
+  document.getElementById('tokTxt').textContent = ok ? 'AUTHED' : 'AUTH_ERR';
+  document.getElementById('tokExp').textContent = ok ? `${exp}s` : '';
+}
+setInterval(()=>{
+  if(tokExp>0&&TOKEN){const l=Math.max(0,Math.round((tokExp-Date.now())/1000));document.getElementById('tokExp').textContent=`${l}s`;}
+},1000);
+fetchToken(); setInterval(fetchToken, CFG.REFRESH_MS);
+
+// ── API ENGINE ──
+const log = [];
+async function api(method, path, body, resElId, hdrs={}) {
+  const el = document.getElementById(resElId);
+  el.innerHTML = `<div class="res"><div class="res-head"><span style="color:var(--mu);font-family:var(--mono);font-size:11px">⟳ ${method} ${path}</span></div></div>`;
+  const t0 = Date.now();
+  try {
+    const h = {'Content-Type':'application/json',...hdrs};
+    if(TOKEN) h['Authorization']='Bearer '+TOKEN;
+    const opts = {method, headers:h};
+    if(body&&['POST','PUT','PATCH'].includes(method)) opts.body=JSON.stringify(body);
+    const r = await fetch(CFG.GW+path, opts);
+    const ms = Date.now()-t0;
+    const txt = await r.text();
+    let pretty=txt, parsed=null;
+    try{parsed=JSON.parse(txt);pretty=JSON.stringify(parsed,null,2);}catch{}
+    const sc = r.status<300?'p2':r.status<500?'p4':'p5';
+    el.innerHTML = `<div class="res"><div class="res-head"><span class="pill ${sc}">${r.status} ${r.statusText}</span><span style="color:var(--mu);font-size:10px;font-family:var(--mono)">${ms}ms</span><span class="res-ms">${method} ${path}</span></div><div class="res-body">${esc(pretty)}</div></div>`;
+    toast((r.ok?'✓ ':'⚠ ')+r.status+' '+r.statusText, r.ok?'ok':'err');
+    addLog(method,path,r.status,ms,r.ok?'ok':'err');
+    return parsed;
+  } catch(e) {
+    const ms=Date.now()-t0;
+    el.innerHTML=`<div class="res"><div class="res-head"><span class="pill p5">Network Error</span><span class="res-ms">${ms}ms</span></div><div class="res-body" style="color:var(--rose)">${esc(e.message)}\n\n// Check:\n// kubectl get pods\n// kubectl get svc nginx-frontend\n// Security Group port open?</div></div>`;
+    toast('✗ '+e.message,'err'); addLog(method,path,0,ms,'err'); return null;
+  }
+}
+function addLog(method,path,status,ms,type) {
+  log.unshift({method,path,status,ms,type,time:new Date().toLocaleTimeString()});
+  if(log.length>10)log.pop();
+  const f=document.getElementById('act-feed');
+  if(!f)return;
+  f.innerHTML=log.map(a=>`<div class="act-item"><div class="act-ic ${a.type}">${a.type==='ok'?'✓':a.type==='err'?'✗':'·'}</div><div class="act-body"><div class="act-title">${a.method} ${a.path}</div><div class="act-meta">${a.time} · ${a.ms}ms</div></div>${a.status?`<span class="act-code ${a.status<300?'ac-2':a.status<500?'ac-4':'ac-5'}">${a.status}</span>`:'<span class="act-code ac-5">ERR</span>'}</div>`).join('');
+}
+
+// ── ACCOUNTS ──
+async function acCreate(){const n=v('ac-name'),e=v('ac-email'),m=v('ac-mobile');if(!n||!e||!m){toast('⚠ Fill all fields','err');return;}await api('POST','/eazybank/accounts/api/create',{name:n,email:e,mobileNumber:m},'ac-create-res');}
+async function acFetch(){const m=v('ac-fetch-m');if(!m){toast('⚠ Enter mobile','err');return;}const d=await api('GET',`/eazybank/accounts/api/fetch?mobileNumber=${m}`,null,'ac-fetch-res');renderAccount(d,'ac-fetch-disp');}
+async function acUpdate(){const m=v('au-mobile');if(!m){toast('⚠ Enter mobile','err');return;}await api('PUT','/eazybank/accounts/api/update',{name:v('au-name'),email:v('au-email'),mobileNumber:m,accountsDto:{accountNumber:parseInt(v('au-accno'))||0,accountType:v('au-type'),branchAddress:v('au-addr')}},'ac-update-res');}
+async function acDelete(){const m=v('ad-mobile');if(!m){toast('⚠ Enter mobile','err');return;}if(!confirm(`Delete account for ${m}?`))return;await api('DELETE',`/eazybank/accounts/api/delete?mobileNumber=${m}`,null,'ac-delete-res');}
+
+// ── LOANS ──
+async function lnCreate(){const m=v('ln-mobile');if(!m){toast('⚠ Enter mobile','err');return;}await api('POST',`/eazybank/loans/api/create?mobileNumber=${m}`,null,'ln-create-res');}
+async function lnFetch(){const m=v('ln-fetch-m');if(!m){toast('⚠ Enter mobile','err');return;}const d=await api('GET',`/eazybank/loans/api/fetch?mobileNumber=${m}`,null,'ln-fetch-res');renderLoan(d,'ln-fetch-disp');}
+async function lnUpdate(){const m=v('lu-mobile'),n=v('lu-num');if(!m||!n){toast('⚠ Enter mobile+loan#','err');return;}await api('PUT','/eazybank/loans/api/update',{mobileNumber:m,loanNumber:n,loanType:v('lu-type'),totalLoan:+v('lu-total'),amountPaid:+v('lu-paid'),outstandingAmount:+v('lu-out')},'ln-update-res');}
+async function lnDelete(){const m=v('ld-mobile');if(!m){toast('⚠ Enter mobile','err');return;}if(!confirm(`Delete loan for ${m}?`))return;await api('DELETE',`/eazybank/loans/api/delete?mobileNumber=${m}`,null,'ln-delete-res');}
+
+// ── CARDS ──
+async function cdCreate(){const m=v('cd-mobile');if(!m){toast('⚠ Enter mobile','err');return;}await api('POST',`/eazybank/cards/api/create?mobileNumber=${m}`,null,'cd-create-res');}
+async function cdFetch(){const m=v('cd-fetch-m');if(!m){toast('⚠ Enter mobile','err');return;}const d=await api('GET',`/eazybank/cards/api/fetch?mobileNumber=${m}`,null,'cd-fetch-res');renderCard(d,'cd-fetch-disp');}
+async function cdUpdate(){const m=v('cu-mobile'),n=v('cu-num');if(!m||!n){toast('⚠ Enter mobile+card#','err');return;}await api('PUT','/eazybank/cards/api/update',{mobileNumber:m,cardNumber:n,cardType:v('cu-type'),totalLimit:+v('cu-total'),amountUsed:+v('cu-used'),availableAmount:+v('cu-avail')},'cd-update-res');}
+async function cdDelete(){const m=v('cdd-mobile');if(!m){toast('⚠ Enter mobile','err');return;}if(!confirm(`Delete card for ${m}?`))return;await api('DELETE',`/eazybank/cards/api/delete?mobileNumber=${m}`,null,'cd-delete-res');}
+
+// ── CUSTOMER 360 ──
+async function custFetch(){
+  const m=v('c3-mobile');if(!m){toast('⚠ Enter mobile','err');return;}
+  const d=await api('GET',`/eazybank/accounts/api/fetchCustomerDetails?mobileNumber=${m}`,null,'c3-res',{'eazybank-correlation-id':'portal-'+Date.now()});
+  if(!d){document.getElementById('c3-disp').innerHTML='';return;}
+  let html='';
+  if(d.name){const ini=d.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();html+=`<div class="c360-hdr"><div class="c360-av">${ini}</div><div><div class="c360-name">${d.name}</div><div class="c360-row"><span>✉ ${d.email||'—'}</span><span>☎ ${d.mobileNumber||'—'}</span></div></div></div>`;}
+  const tmp=el=>({id:'_t'+Date.now()+Math.random(),el});
+  const ta=tmp();document.body.appendChild(ta.el=document.createElement('div'));ta.el.id=ta.id;
+  renderAccount(d,ta.id);html+=ta.el.innerHTML;document.body.removeChild(ta.el);
+  if(d.loansDto){const tl=tmp();document.body.appendChild(tl.el=document.createElement('div'));tl.el.id=tl.id;renderLoan(d.loansDto,tl.id);html+=tl.el.innerHTML;document.body.removeChild(tl.el);}
+  if(d.cardsDto){const tc=tmp();document.body.appendChild(tc.el=document.createElement('div'));tc.el.id=tc.id;renderCard(d.cardsDto,tc.id);html+=tc.el.innerHTML;document.body.removeChild(tc.el);}
+  document.getElementById('c3-disp').innerHTML=html;
+}
+async function infoCall(path,elId){await api('GET',path,null,elId);}
+
+// ── RENDER ──
+function renderAccount(d,id){
+  const el=document.getElementById(id);if(!d){el.innerHTML='';return;}
+  const a=d.accountsDto||d;
+  el.innerHTML=`<div class="d-card"><div class="d-card-h"><div class="d-name">${d.name||'Account'}</div><div class="d-meta"><span>✉ ${d.email||'—'}</span><span>☎ ${d.mobileNumber||'—'}</span><span class="d-badge">${a.accountType||'Account'}</span></div></div><div class="d-body"><div class="d-grid"><div class="d-item"><div class="di-l">Account #</div><div class="di-v">${a.accountNumber||'—'}</div></div><div class="d-item"><div class="di-l">Type</div><div class="di-v">${a.accountType||'—'}</div></div><div class="d-item span2"><div class="di-l">Branch</div><div class="di-v">${a.branchAddress||'—'}</div></div></div></div></div>`;
+}
+function renderLoan(d,id){
+  const el=document.getElementById(id);if(!d){el.innerHTML='';return;}
+  const pct=d.totalLoan?Math.min(100,Math.round((d.amountPaid/d.totalLoan)*100)):0;
+  const col=pct>75?'var(--neon)':pct>40?'var(--gold)':'var(--sky)';
+  el.innerHTML=`<div class="fin"><div class="fin-h"><div><div class="fin-type">${d.loanType||'Loan'}</div><div class="fin-num">Loan # ${d.loanNumber||'—'}</div></div><span class="pill p2">${pct}% repaid</span></div><div class="fin-b"><div class="prog-wrap"><div class="prog-labels"><span>Repayment</span><b>${pct}%</b></div><div class="prog-bar"><div class="prog-fill" style="width:${pct}%;background:${col}"></div></div></div><div class="amt-row"><div class="amt-item"><div class="ai-l">Total</div><div class="ai-v gold">₹${fmt(d.totalLoan)}</div></div><div class="amt-item"><div class="ai-l">Paid</div><div class="ai-v neon">₹${fmt(d.amountPaid)}</div></div><div class="amt-item"><div class="ai-l">Outstanding</div><div class="ai-v rose">₹${fmt(d.outstandingAmount)}</div></div></div></div></div>`;
+}
+function renderCard(d,id){
+  const el=document.getElementById(id);if(!d){el.innerHTML='';return;}
+  const pct=d.totalLimit?Math.min(100,Math.round((d.amountUsed/d.totalLimit)*100)):0;
+  const col=pct>80?'var(--rose)':pct>50?'var(--gold)':'var(--neon)';
+  el.innerHTML=`<div class="fin"><div class="fin-h"><div><div class="fin-type">${d.cardType||'Card'}</div><div class="fin-num">**** ${(d.cardNumber||'0000').slice(-4)}</div></div><span class="pill ${pct>80?'p5':pct>50?'p4':'p2'}">${pct}% used</span></div><div class="fin-b"><div class="prog-wrap"><div class="prog-labels"><span>Utilization</span><b>${pct}%</b></div><div class="prog-bar"><div class="prog-fill" style="width:${pct}%;background:${col}"></div></div></div><div class="amt-row"><div class="amt-item"><div class="ai-l">Limit</div><div class="ai-v gold">₹${fmt(d.totalLimit)}</div></div><div class="amt-item"><div class="ai-l">Used</div><div class="ai-v rose">₹${fmt(d.amountUsed)}</div></div><div class="amt-item"><div class="ai-l">Available</div><div class="ai-v neon">₹${fmt(d.availableAmount)}</div></div></div></div></div>`;
+}
+
+// ── NAV ──
+function nav(id,iconEl){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.ir-icon').forEach(i=>i.classList.remove('on'));
+  document.querySelectorAll('.ni').forEach(n=>n.classList.remove('on'));
+  document.getElementById('page-'+id).classList.add('on');
+  if(iconEl)iconEl.classList.add('on');
+  // sync sidebar
+  const pageToIdx={dash:0,accounts:1,loans:2,cards:3,customer:4,gateway:5};
+  const nis=document.querySelectorAll('.ni[data-k]');
+  const idx=pageToIdx[id];if(idx!==undefined&&nis[idx])nis[idx].classList.add('on');
+}
+function nav2(id,niEl){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.ni').forEach(n=>n.classList.remove('on'));
+  document.querySelectorAll('.ir-icon').forEach(i=>i.classList.remove('on'));
+  document.getElementById('page-'+id).classList.add('on');
+  if(niEl)niEl.classList.add('on');
+}
+function stab(pre,id,el){
+  document.querySelectorAll(`[id^="${pre}-"]`).forEach(t=>t.classList.remove('on'));
+  document.getElementById(`${pre}-${id}`).classList.add('on');
+  el.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
+  el.classList.add('on');
+}
+function filterNav(q){
+  document.querySelectorAll('.ni[data-k]').forEach(n=>{n.style.display=n.dataset.k.includes(q.toLowerCase())?'':'none';});
+}
+
+// ── UTILS ──
+function v(id){const e=document.getElementById(id);return e?e.value.trim():'';}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function fmt(n){return n?Number(n).toLocaleString('en-IN'):'0';}
+function fillDemo(){document.getElementById('ac-name').value='Sree Kumar';document.getElementById('ac-email').value='sree@eazybytes.com';document.getElementById('ac-mobile').value='9876543210';}
+function toast(msg,type='info'){
+  const c=document.getElementById('toast-wrap');
+  const t=document.createElement('div');t.className=`toast ${type}`;t.textContent=msg;
+  c.appendChild(t);setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300);},3000);
+}
+</script>
+</body>
+</html>

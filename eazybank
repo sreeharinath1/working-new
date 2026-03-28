@@ -1,0 +1,70 @@
+# ════════════════════════════════════════════════════════════════════
+# EazyBank — Docker Compose (Local Development)
+# Runs: nginx-frontend + cors-proxy
+# Assumes: microservices already running on host (or EC2)
+#
+# Usage:
+#   docker compose up --build
+#   Open: http://localhost:3000
+# ════════════════════════════════════════════════════════════════════
+
+version: "3.9"
+
+services:
+  # ── Nginx Frontend ─────────────────────────────────────────────────
+  nginx-frontend:
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    container_name: eazybank-frontend
+    ports:
+      - "3000:80"
+    environment:
+      - GATEWAY_HOST=cors-proxy
+      - GATEWAY_PORT=8888
+      - KEYCLOAK_HOST=cors-proxy
+      - KEYCLOAK_PORT=8888
+    volumes:
+      # Override config.js with local dev config
+      - ./docker/nginx/dev-config.js:/etc/nginx/conf.d/config.js:ro
+      - ./docker/nginx/nginx-standalone.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend/eazybank.html:/usr/share/nginx/html/eazybank.html:ro
+    depends_on:
+      cors-proxy:
+        condition: service_healthy
+    networks:
+      - eazybank-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── CORS Proxy ─────────────────────────────────────────────────────
+  cors-proxy:
+    build:
+      context: .
+      dockerfile: docker/proxy/Dockerfile
+    container_name: eazybank-proxy
+    ports:
+      - "8888:8888"
+    environment:
+      - GATEWAY_URL=http://${EC2_IP:-13.233.158.149}:${GW_PORT:-30564}
+      - KEYCLOAK_URL=http://${EC2_IP:-13.233.158.149}:${KC_PORT:-31479}/realms/master/protocol/openid-connect/token
+      - KC_CLIENT_ID=${KC_CLIENT_ID:-eazybank-callcenter-cc}
+      - KC_CLIENT_SECRET=${KC_CLIENT_SECRET:-4VuZ7QiUhcN7SUHr9Vz2bq3bGUKeWIuQ}
+      - TOKEN_REFRESH_SEC=50
+    networks:
+      - eazybank-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8888/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  eazybank-dev:
+    driver: bridge

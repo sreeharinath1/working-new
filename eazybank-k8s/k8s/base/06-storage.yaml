@@ -1,0 +1,72 @@
+# ════════════════════════════════════════════════════════════════════
+# EazyBank — Persistent Storage (Production)
+# Replace emptyDir volumes in databases with these PVCs
+# ════════════════════════════════════════════════════════════════════
+
+# ── ACCOUNTS DB PVC ──────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: accountsdb-pvc
+  namespace: eazybank
+  labels:
+    app: accountsdb
+    app.kubernetes.io/part-of: eazybank
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard          # change to gp2/gp3 on EKS
+  resources:
+    requests:
+      storage: 5Gi
+---
+# ── LOANS DB PVC ─────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: loansdb-pvc
+  namespace: eazybank
+  labels:
+    app: loansdb
+    app.kubernetes.io/part-of: eazybank
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 5Gi
+---
+# ── CARDS DB PVC ─────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cardsdb-pvc
+  namespace: eazybank
+  labels:
+    app: cardsdb
+    app.kubernetes.io/part-of: eazybank
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 5Gi
+---
+# ── KEYCLOAK PVC ─────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: keycloak-pvc
+  namespace: eazybank
+  labels:
+    app: keycloak
+    app.kubernetes.io/part-of: eazybank
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 2Gi

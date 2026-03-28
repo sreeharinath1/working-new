@@ -1,0 +1,78 @@
+# ════════════════════════════════════════════════════════════════════
+# EazyBank Helm Chart — values.yaml
+# ════════════════════════════════════════════════════════════════════
+
+# ── Global ──────────────────────────────────────────────────────────
+global:
+  namespace: eazybank
+  imageRegistry: ""      # e.g. 123456789.dkr.ecr.ap-south-1.amazonaws.com
+  imagePullPolicy: IfNotPresent
+
+# ── Nginx Frontend ───────────────────────────────────────────────────
+frontend:
+  enabled: true
+  image:
+    repository: eazybank/frontend
+    tag: "latest"
+  replicaCount: 2
+  service:
+    type: NodePort
+    port: 80
+    nodePort: 30080
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "200m"
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    cpuUtilization: 70
+
+# ── CORS Proxy (dev/local only) ──────────────────────────────────────
+corsProxy:
+  enabled: false      # set true for direct-mode deployment
+  image:
+    repository: eazybank/cors-proxy
+    tag: "latest"
+  replicaCount: 1
+
+# ── Keycloak ─────────────────────────────────────────────────────────
+keycloak:
+  realm: master
+  clientId: eazybank-callcenter-cc
+  # clientSecret: injected from Secret — never set here
+
+# ── Gateway ──────────────────────────────────────────────────────────
+gateway:
+  host: gatewayserver
+  port: 8072
+
+# ── Ingress ──────────────────────────────────────────────────────────
+ingress:
+  enabled: false      # set true with proper domain
+  className: nginx
+  host: eazybank.local
+  tls: false
+  certSecretName: eazybank-tls
+
+# ── Databases ────────────────────────────────────────────────────────
+databases:
+  enabled: true
+  storageClass: standard
+  storageSize: 5Gi
+  image:
+    repository: postgres
+    tag: "15-alpine"
+
+# ── Network Policies ─────────────────────────────────────────────────
+networkPolicy:
+  enabled: true
+
+# ── Pod Disruption Budget ────────────────────────────────────────────
+pdb:
+  enabled: true
+  minAvailable: 1

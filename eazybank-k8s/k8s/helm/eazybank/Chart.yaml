@@ -1,0 +1,14 @@
+apiVersion: v2
+name: eazybank
+description: EazyBank Microservices Frontend — Helm Chart
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - banking
+  - microservices
+  - spring-cloud
+  - kubernetes
+maintainers:
+  - name: eazybank-team
+    email: devops@eazybytes.com

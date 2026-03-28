@@ -1,0 +1,108 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank Frontend — RBAC
+#  ServiceAccount + Role (minimal) + RoleBinding
+#
+#  Principle of least privilege:
+#    - nginx container needs NO K8s API access
+#    - filebeat sidecar needs pod metadata only (for log enrichment)
+#    - init container needs ConfigMap read only
+#
+#  automountServiceAccountToken: false in both SA and Deployment
+#  prevents the token from being mounted unless explicitly needed.
+# ─────────────────────────────────────────────────────────────────
+
+# ── ServiceAccount ─────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eazybank-frontend-sa
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: rbac
+  annotations:
+    # Uncomment for AWS IRSA (EKS):
+    # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/eazybank-frontend
+    # Uncomment for GCP Workload Identity (GKE):
+    # iam.gke.io/gcp-service-account: eazybank-frontend@PROJECT.iam.gserviceaccount.com
+automountServiceAccountToken: false   # must also be false in Deployment spec
+---
+# ── Role — minimal permissions only ───────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: eazybank-frontend-role
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: rbac
+rules:
+  # ── ConfigMap read — init container + filebeat config access ─────
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+    resourceNames:
+      - eazybank-nginx-config
+      - eazybank-frontend-config
+      - eazybank-filebeat-config
+
+  # ── Pod read — filebeat Kubernetes metadata enrichment ────────────
+  # Filebeat's add_kubernetes_metadata processor needs pod info.
+  - apiGroups: [""]
+    resources: ["pods", "namespaces"]
+    verbs: ["get", "list", "watch"]
+
+  # ── Secret read — only the specific secret this app uses ──────────
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+    resourceNames:
+      - eazybank-frontend-secrets
+---
+# ── RoleBinding ────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: eazybank-frontend-rolebinding
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: rbac
+subjects:
+  - kind: ServiceAccount
+    name: eazybank-frontend-sa
+    namespace: eazybank
+roleRef:
+  kind: Role
+  name: eazybank-frontend-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# ── ClusterRole for Trivy CronJob (read VulnerabilityReports) ─────
+# Only needed if Trivy Operator is installed.
+# Comment out if not using Trivy Operator.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eazybank-trivy-reader
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: security
+rules:
+  - apiGroups: ["aquasecurity.github.io"]
+    resources: ["vulnerabilityreports", "configauditreports"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: eazybank-trivy-reader-binding
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+subjects:
+  - kind: ServiceAccount
+    name: eazybank-frontend-sa
+    namespace: eazybank
+roleRef:
+  kind: ClusterRole
+  name: eazybank-trivy-reader
+  apiGroup: rbac.authorization.k8s.io

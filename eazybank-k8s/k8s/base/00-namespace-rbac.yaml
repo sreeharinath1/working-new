@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: eazybank
+  labels:
+    app.kubernetes.io/managed-by: kubectl
+    env: production
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eazybank-sa
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/part-of: eazybank
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: eazybank-role
+  namespace: eazybank
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: eazybank-rolebinding
+  namespace: eazybank
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: eazybank-role
+subjects:
+  - kind: ServiceAccount
+    name: eazybank-sa
+    namespace: eazybank

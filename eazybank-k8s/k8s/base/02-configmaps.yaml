@@ -1,0 +1,153 @@
+# ════════════════════════════════════════════════════════════════════
+# EazyBank ConfigMaps
+# ════════════════════════════════════════════════════════════════════
+
+# ── NGINX CONFIG ─────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: eazybank
+  labels:
+    app: nginx-frontend
+    app.kubernetes.io/part-of: eazybank
+data:
+  nginx.conf: |
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid /var/run/nginx.pid;
+
+    events {
+      worker_connections 1024;
+      use epoll;
+      multi_accept on;
+    }
+
+    http {
+      include       /etc/nginx/mime.types;
+      default_type  application/octet-stream;
+
+      # Logging
+      log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" rt=$request_time';
+      access_log /var/log/nginx/access.log main;
+
+      # Performance
+      sendfile        on;
+      tcp_nopush      on;
+      tcp_nodelay     on;
+      keepalive_timeout 65;
+      gzip on;
+      gzip_vary on;
+      gzip_min_length 1024;
+      gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+
+      # Security headers
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+      # Rate limiting
+      limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
+      limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/s;
+
+      server {
+        listen 80;
+        server_name _;
+        root /usr/share/nginx/html;
+        index eazybank.html;
+
+        # Health check (for K8s probes)
+        location /healthz {
+          return 200 'ok';
+          add_header Content-Type text/plain;
+        }
+
+        # Frontend config (served from ConfigMap volume)
+        location = /config.js {
+          root /etc/nginx/conf.d;
+          add_header Content-Type application/javascript;
+          add_header Cache-Control "no-cache, no-store, must-revalidate";
+        }
+
+        # Static frontend files
+        location / {
+          try_files $uri $uri/ /eazybank.html;
+          add_header Cache-Control "no-cache";
+        }
+
+        # ── API Gateway proxy ──────────────────────────────────────
+        location /eazybank/ {
+          limit_req zone=api burst=50 nodelay;
+          proxy_pass http://gatewayserver.eazybank.svc.cluster.local:8072;
+          proxy_http_version 1.1;
+          proxy_set_header Host              $host;
+          proxy_set_header X-Real-IP         $remote_addr;
+          proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header Connection        "";
+          proxy_connect_timeout  30s;
+          proxy_read_timeout    120s;
+          proxy_send_timeout    120s;
+          proxy_buffering        on;
+          proxy_buffer_size      16k;
+          proxy_buffers          4 16k;
+        }
+
+        # ── Keycloak proxy ────────────────────────────────────────
+        location /realms/ {
+          limit_req zone=auth burst=10 nodelay;
+          proxy_pass http://keycloak.eazybank.svc.cluster.local:80;
+          proxy_http_version 1.1;
+          proxy_set_header Host              $host;
+          proxy_set_header X-Real-IP         $remote_addr;
+          proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header Connection        "";
+          proxy_connect_timeout 30s;
+          proxy_read_timeout   120s;
+          proxy_send_timeout   120s;
+        }
+      }
+    }
+---
+# ── FRONTEND APP CONFIG (injected as config.js) ───────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: eazybank
+  labels:
+    app: nginx-frontend
+    app.kubernetes.io/part-of: eazybank
+data:
+  # NOTE: clientSecret is pulled from frontend-secrets via envsubst
+  # For pure static deployments, inject at build time or use init container
+  config.js: |
+    window.APP_CONFIG = {
+      gatewayPath: '/eazybank',
+      keycloakUrl: '/realms/master/protocol/openid-connect/token',
+      clientId: 'eazybank-callcenter-cc',
+      clientSecret: '__KEYCLOAK_CLIENT_SECRET__',  // replaced by init container
+      tokenRefreshInterval: 50000,
+      services: {
+        accounts: { port: 8080, path: '/eazybank/accounts' },
+        loans:    { port: 8090, path: '/eazybank/loans' },
+        cards:    { port: 9000, path: '/eazybank/cards' },
+        gateway:  { port: 8072 },
+        keycloak: { port: 80   }
+      }
+    };
+---
+# ── FRONTEND HTML ConfigMap ───────────────────────────────────────────
+# (Create via: kubectl create configmap frontend-html --from-file=eazybank.html -n eazybank)
+# Listed here for reference — generate dynamically in CI/CD
+# apiVersion: v1
+# kind: ConfigMap
+# metadata:
+#   name: frontend-html
+#   namespace: eazybank
+# binaryData:
+#   eazybank.html: <base64-of-html-file>

@@ -1,0 +1,38 @@
+# ── FRONTEND APP CONFIG (injected as config.js) ───────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: eazybank
+  labels:
+    app: nginx-frontend
+    app.kubernetes.io/part-of: eazybank
+data:
+  # NOTE: clientSecret is pulled from frontend-secrets via envsubst
+  # For pure static deployments, inject at build time or use init container
+  config.js: |
+    window.APP_CONFIG = {
+      gatewayPath: '/eazybank',
+      keycloakUrl: '/realms/master/protocol/openid-connect/token',
+      clientId: 'eazybank-callcenter-cc',
+      clientSecret: '__KEYCLOAK_CLIENT_SECRET__',  // replaced by init container
+      tokenRefreshInterval: 50000,
+      services: {
+        accounts: { port: 8080, path: '/eazybank/accounts' },
+        loans:    { port: 8090, path: '/eazybank/loans' },
+        cards:    { port: 9000, path: '/eazybank/cards' },
+        gateway:  { port: 8072 },
+        keycloak: { port: 80   }
+      }
+    };
+---
+# ── FRONTEND HTML ConfigMap ───────────────────────────────────────────
+# (Create via: kubectl create configmap frontend-html --from-file=eazybank.html -n eazybank)
+# Listed here for reference — generate dynamically in CI/CD
+# apiVersion: v1
+# kind: ConfigMap
+# metadata:
+#   name: frontend-html
+#   namespace: eazybank
+# binaryData:
+#   eazybank.html: <base64-of-html-file>

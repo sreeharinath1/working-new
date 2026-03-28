@@ -1,0 +1,367 @@
+# ════════════════════════════════════════════════════════════════════
+# EazyBank — Governance, Jobs & StatefulSet
+# ✅ ResourceQuota     ✅ LimitRange
+# ✅ CronJob           ✅ Job (DB migration)
+# ✅ StatefulSet       ✅ DaemonSet (log collector)
+# ════════════════════════════════════════════════════════════════════
+
+# ──────────────────────────────────────────────────────────────────
+# ResourceQuota — hard limits for the entire namespace
+# ──────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: eazybank-quota
+  namespace: eazybank
+spec:
+  hard:
+    # Compute
+    requests.cpu: "4"
+    requests.memory: 4Gi
+    limits.cpu: "8"
+    limits.memory: 8Gi
+    # Objects
+    pods: "30"
+    services: "15"
+    secrets: "20"
+    configmaps: "20"
+    persistentvolumeclaims: "15"
+    # Deployments/ReplicaSets
+    count/deployments.apps: "15"
+    count/replicasets.apps: "30"
+
+---
+# ──────────────────────────────────────────────────────────────────
+# LimitRange — default requests/limits for any container without explicit values
+# ──────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: eazybank-limits
+  namespace: eazybank
+spec:
+  limits:
+    # Container defaults
+    - type: Container
+      default:
+        cpu: 200m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "2"
+        memory: 1Gi
+      min:
+        cpu: 10m
+        memory: 16Mi
+    # Pod max
+    - type: Pod
+      max:
+        cpu: "4"
+        memory: 2Gi
+    # PVC max
+    - type: PersistentVolumeClaim
+      max:
+        storage: 20Gi
+      min:
+        storage: 1Gi
+
+---
+# ──────────────────────────────────────────────────────────────────
+# CronJob — Daily DB health check + log cleanup
+# Runs every day at 2:00 AM
+# ──────────────────────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-health-check
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/part-of: eazybank
+spec:
+  schedule: "0 2 * * *"           # daily at 2am
+  concurrencyPolicy: Forbid        # don't run if previous is still running
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            job: db-health-check
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: health-checker
+              image: postgres:15-alpine
+              command:
+                - sh
+                - -c
+                - |
+                  echo "🏥 Checking DB health: $(date)"
+                  for DB in accountsdb loansdb cardsdb; do
+                    pg_isready -h $DB -U root -d $DB \
+                      && echo "✅ $DB: healthy" \
+                      || echo "❌ $DB: UNHEALTHY"
+                  done
+                  echo "✅ Health check complete"
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-credentials
+                      key: postgres-password
+              resources:
+                requests: { memory: "32Mi", cpu: "10m" }
+                limits:   { memory: "64Mi", cpu: "50m" }
+
+---
+# ──────────────────────────────────────────────────────────────────
+# CronJob — Token/session cleanup (weekly)
+# ──────────────────────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: session-cleanup
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/part-of: eazybank
+spec:
+  schedule: "0 3 * * 0"           # weekly Sunday at 3am
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: cleanup
+              image: postgres:15-alpine
+              command:
+                - sh
+                - -c
+                - |
+                  echo "🧹 Running weekly cleanup: $(date)"
+                  # Add your cleanup SQL here
+                  echo "SELECT pg_size_pretty(pg_database_size('accountsdb'));" | \
+                    psql -h accountsdb -U root -d accountsdb
+                  echo "✅ Cleanup done"
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-credentials
+                      key: postgres-password
+              resources:
+                requests: { memory: "32Mi", cpu: "10m" }
+                limits:   { memory: "64Mi", cpu: "50m" }
+
+---
+# ──────────────────────────────────────────────────────────────────
+# Job — One-time DB migration (run manually when needed)
+# Usage: kubectl apply -f 08-governance-jobs.yaml
+#        kubectl wait --for=condition=complete job/db-migrate -n eazybank
+# ──────────────────────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/part-of: eazybank
+  annotations:
+    description: "Run manually for schema migrations"
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300      # fail if takes > 5min
+  template:
+    metadata:
+      labels:
+        job: db-migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: postgres:15-alpine
+          command:
+            - sh
+            - -c
+            - |
+              echo "🔄 Running DB migrations: $(date)"
+              # Example: create indexes, alter tables
+              psql -h accountsdb -U root -d accountsdb -c "
+                SELECT version();
+                SELECT 'accounts migration complete' as status;
+              "
+              psql -h loansdb -U root -d loansdb -c "
+                SELECT 'loans migration complete' as status;
+              "
+              psql -h cardsdb -U root -d cardsdb -c "
+                SELECT 'cards migration complete' as status;
+              "
+              echo "✅ All migrations complete"
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-password
+          resources:
+            requests: { memory: "64Mi", cpu: "50m" }
+            limits:   { memory: "128Mi", cpu: "100m" }
+
+---
+# ──────────────────────────────────────────────────────────────────
+# StatefulSet — accountsdb (better than Deployment for databases)
+# Gives: stable pod name (accountsdb-0), stable PVC, ordered scaling
+# ──────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: accountsdb-stateful
+  namespace: eazybank
+  labels:
+    app: accountsdb
+    tier: database
+    app.kubernetes.io/part-of: eazybank
+  annotations:
+    description: "Production: use StatefulSet instead of Deployment for DBs"
+spec:
+  serviceName: accountsdb          # headless service name
+  replicas: 1
+  selector:
+    matchLabels:
+      app: accountsdb
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+  template:
+    metadata:
+      labels:
+        app: accountsdb
+        tier: database
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: accountsdb
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: postgres-password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests: { memory: "128Mi", cpu: "100m" }
+            limits:   { memory: "512Mi", cpu: "500m" }
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "root", "-d", "accountsdb"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "root", "-d", "accountsdb"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  # Auto-creates PVC per pod (accountsdb-data-accountsdb-stateful-0)
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app: accountsdb
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 5Gi
+
+---
+# Headless service for StatefulSet (stable DNS: accountsdb-0.accountsdb)
+apiVersion: v1
+kind: Service
+metadata:
+  name: accountsdb-headless
+  namespace: eazybank
+  labels:
+    app: accountsdb
+spec:
+  clusterIP: None                  # headless
+  selector:
+    app: accountsdb
+  ports:
+    - port: 5432
+      targetPort: 5432
+
+---
+# ──────────────────────────────────────────────────────────────────
+# DaemonSet — Node-level log collector (runs 1 pod on every node)
+# ──────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-log-collector
+  namespace: eazybank
+  labels:
+    app: node-log-collector
+    app.kubernetes.io/part-of: eazybank
+spec:
+  selector:
+    matchLabels:
+      app: node-log-collector
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: node-log-collector
+    spec:
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: fluent-bit
+          image: fluent/fluent-bit:2.2
+          resources:
+            requests: { memory: "32Mi", cpu: "20m" }
+            limits:   { memory: "64Mi", cpu: "100m" }
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: varlibdockercontainers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+          securityContext:
+            runAsNonRoot: false    # needs host log access
+      volumes:
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: varlibdockercontainers
+          hostPath:
+            path: /var/lib/docker/containers
+      terminationGracePeriodSeconds: 10

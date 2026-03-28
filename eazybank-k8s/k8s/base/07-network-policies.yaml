@@ -1,0 +1,160 @@
+# ════════════════════════════════════════════════════════════════════
+# EazyBank — NetworkPolicies
+# Enforce zero-trust: only allow explicitly defined traffic
+# ════════════════════════════════════════════════════════════════════
+
+# ── DEFAULT DENY ALL ─────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: eazybank
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# ── ALLOW DNS (all pods need DNS) ────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: eazybank
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# ── NGINX FRONTEND ───────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nginx-frontend-policy
+  namespace: eazybank
+spec:
+  podSelector:
+    matchLabels:
+      app: nginx-frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: 80
+  egress:
+    # To Gateway
+    - to:
+        - podSelector:
+            matchLabels:
+              app: gatewayserver
+      ports:
+        - port: 8072
+    # To Keycloak
+    - to:
+        - podSelector:
+            matchLabels:
+              app: keycloak
+      ports:
+        - port: 80
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+---
+# ── GATEWAY SERVER ────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gatewayserver-policy
+  namespace: eazybank
+spec:
+  podSelector:
+    matchLabels:
+      app: gatewayserver
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: nginx-frontend
+      ports:
+        - port: 8072
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: microservice
+    - ports:
+        - port: 53
+          protocol: UDP
+---
+# ── MICROSERVICES (accounts, loans, cards) ────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: microservices-policy
+  namespace: eazybank
+spec:
+  podSelector:
+    matchLabels:
+      tier: microservice
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: gatewayserver
+        - podSelector:
+            matchLabels:
+              tier: microservice    # inter-service (Feign)
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: database
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: microservice
+    - to:
+        - podSelector:
+            matchLabels:
+              app: configserver
+    - to:
+        - podSelector:
+            matchLabels:
+              app: eurekaserver
+    - ports:
+        - port: 53
+          protocol: UDP
+---
+# ── DATABASES ────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-policy
+  namespace: eazybank
+spec:
+  podSelector:
+    matchLabels:
+      tier: database
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: microservice
+      ports:
+        - port: 5432

@@ -1,0 +1,67 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank Frontend — HorizontalPodAutoscaler
+#  API: autoscaling/v2  (requires K8s ≥ 1.23)
+#
+#  Scales on:  CPU avg utilization > 60%
+#              Memory avg utilization > 70%
+#  Min: 3 replicas  (matches ResourceQuota + PDB)
+#  Max: 10 replicas (within namespace quota of 20 pods)
+#
+#  Scale-up:   aggressive  — adds up to 2 pods / 30s
+#  Scale-down: conservative — removes 1 pod / 60s, 5m window
+# ─────────────────────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: eazybank-frontend-hpa
+  namespace: eazybank
+  labels:
+    app.kubernetes.io/name: eazybank-frontend
+    app.kubernetes.io/component: frontend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: eazybank-frontend
+
+  minReplicas: 3
+  maxReplicas: 10
+
+  metrics:
+    # ── CPU — primary scaling signal ──────────────────────────────
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+
+    # ── Memory — secondary scaling signal ─────────────────────────
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+  behavior:
+    # ── Scale UP: fast reaction to traffic spikes ─────────────────
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2           # add up to 2 pods per 30s
+          periodSeconds: 30
+        - type: Percent
+          value: 50          # or 50% of current replicas
+          periodSeconds: 60
+      selectPolicy: Max      # pick whichever adds more pods
+
+    # ── Scale DOWN: slow — prevents thrashing ─────────────────────
+    scaleDown:
+      stabilizationWindowSeconds: 300   # 5-minute cool-down window
+      policies:
+        - type: Pods
+          value: 1           # remove at most 1 pod per 60s
+          periodSeconds: 60
+      selectPolicy: Min

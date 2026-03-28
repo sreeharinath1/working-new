@@ -1,0 +1,220 @@
+# ─────────────────────────────────────────────────────────────────
+#  EazyBank Frontend — Docker Compose
+#  Profiles:
+#    dev    → frontend + mock backends
+#    prod   → production build with full ELK stack
+#    sec    → security scanning services (Trivy + Snyk)
+# ─────────────────────────────────────────────────────────────────
+version: "3.9"
+
+# ── Shared networks ───────────────────────────────────────────────
+networks:
+  eazybank-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+  elk-net:
+    driver: bridge
+
+# ── Shared volumes ────────────────────────────────────────────────
+volumes:
+  elasticsearch-data:
+    driver: local
+  kibana-data:
+    driver: local
+  logstash-pipeline:
+    driver: local
+  nginx-logs:
+    driver: local
+
+# ═════════════════════════════════════════════════════════════════
+services:
+
+  # ── Frontend (Nginx) ───────────────────────────────────────────
+  eazybank-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: production
+      args:
+        BUILD_DATE: "${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+        GIT_COMMIT: "${GIT_COMMIT:-local}"
+    image: eazybytes/eazybank-frontend:${IMAGE_TAG:-latest}
+    container_name: eazybank-frontend
+    restart: unless-stopped
+    ports:
+      - "30080:80"
+    environment:
+      - NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx/conf.d
+    volumes:
+      # config.js injected at runtime (mirrors K8s ConfigMap)
+      - ./config.js:/etc/nginx/conf.d/config.js:ro
+      # Nginx logs forwarded to Filebeat
+      - nginx-logs:/var/log/nginx
+    networks:
+      - eazybank-net
+      - elk-net
+    depends_on:
+      - filebeat
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    labels:
+      app: eazybank-frontend
+      environment: production
+      team: platform
+
+  # ── Filebeat (log shipper) ─────────────────────────────────────
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.3
+    container_name: eazybank-filebeat
+    restart: unless-stopped
+    user: root                          # needs to read nginx logs
+    volumes:
+      - ./monitoring/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - nginx-logs:/var/log/nginx:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - elk-net
+    depends_on:
+      - logstash
+    command: filebeat -e --strict.perms=false
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ── Logstash (log pipeline) ────────────────────────────────────
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.3
+    container_name: eazybank-logstash
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./monitoring/logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+    environment:
+      - LS_JAVA_OPTS=-Xms256m -Xmx512m
+    networks:
+      - elk-net
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  # ── Elasticsearch ─────────────────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.3
+    container_name: eazybank-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false      # enable + add certs for full prod
+      - xpack.security.http.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - cluster.name=eazybank-logs
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - elk-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ── Kibana ────────────────────────────────────────────────────
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.3
+    container_name: eazybank-kibana
+    restart: unless-stopped
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - SERVER_NAME=eazybank-kibana
+      - SERVER_BASEPATH=
+      - XPACK_SECURITY_ENABLED=false
+    ports:
+      - "5601:5601"
+    networks:
+      - elk-net
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - kibana-data:/usr/share/kibana/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ── Trivy (security scan — run once) ──────────────────────────
+  trivy-scan:
+    image: aquasec/trivy:latest
+    container_name: eazybank-trivy
+    profiles: ["sec"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./security/trivy-reports:/reports
+    command: >
+      image
+      --exit-code 0
+      --severity HIGH,CRITICAL
+      --format json
+      --output /reports/trivy-report.json
+      eazybytes/eazybank-frontend:${IMAGE_TAG:-latest}
+    networks:
+      - eazybank-net
+
+  # ── Snyk (dependency scan — run once) ─────────────────────────
+  snyk-scan:
+    image: snyk/snyk:node
+    container_name: eazybank-snyk
+    profiles: ["sec"]
+    environment:
+      - SNYK_TOKEN=${SNYK_TOKEN}
+    volumes:
+      - ../:/project:ro
+      - ./security/snyk-reports:/reports
+    working_dir: /project
+    command: >
+      bash -c "snyk test --json > /reports/snyk-report.json 2>&1 || true &&
+               snyk container test eazybytes/eazybank-frontend:${IMAGE_TAG:-latest}
+               --json > /reports/snyk-container-report.json 2>&1 || true"
+    networks:
+      - eazybank-net
