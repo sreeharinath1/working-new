@@ -8,7 +8,7 @@ data:
       gatewayPath: '/eazybank',
       keycloakUrl: '/realms/master/protocol/openid-connect/token',
       clientId: 'eazybank-callcenter-cc',
-      clientSecret: 'WbB2Vs8LSpmWvxXlbhMyfWt3fiwF7vF4',
+      clientSecret: '4VuZ7QiUhcN7SUHr9Vz2bq3bGUKeWIuQ',
       tokenRefreshInterval: 50000,
       services: {
         accounts: { port: 8080 },

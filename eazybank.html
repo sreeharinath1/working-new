@@ -4,32 +4,26 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>EazyBank Portal</title>
+<script src="/config.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 
 <script>
 /* ═══════════════════════════════════════════════
    ✅ CHANGE ONLY THIS CONFIG SECTION
    ═══════════════════════════════════════════════ */
+// Config loaded from /config.js (frontend-config ConfigMap)
+// Secrets never hardcoded in HTML
+const _c = window.APP_CONFIG || {};
 window.CFG = {
-  /* EC2 Public IP — change when IP changes */
-  EC2_IP: '13.233.158.149',
-
-  /* Set to true  → uses relative paths via Nginx (PROD)
-     Set to false → uses direct EC2 IP:port (DEV/testing) */
-  USE_NGINX: true,
-
-  /* NodePorts — only used when USE_NGINX = false */
-  GATEWAY_PORT:  30564,
-  KEYCLOAK_PORT: 31479,
-  NGINX_PORT:    30080,
-
-  /* Keycloak credentials */
-  KC_REALM:  'master',
-  KC_CLIENT: 'eazybank-callcenter-cc',
-  KC_SECRET: 'WbB2Vs8LSpmWvxXlbhMyfWt3fiwF7vF4',
-
-  /* Token refresh interval in ms (50s = before 60s expiry) */
-  TOKEN_REFRESH_MS: 50000,
+  EC2_IP:           _c.ec2Ip            || '13.233.158.149',
+  USE_NGINX:        true,
+  GATEWAY_PORT:     30564,
+  KEYCLOAK_PORT:    31479,
+  NGINX_PORT:       30080,
+  KC_REALM:         'master',
+  KC_CLIENT:        _c.clientId         || 'eazybank-callcenter-cc',
+  KC_SECRET:        _c.clientSecret     || '',
+  TOKEN_REFRESH_MS: _c.tokenRefreshInterval || 50000,
 };
 /* ═══════════════════════════════════════════════ */
 
