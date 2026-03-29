@@ -31,7 +31,7 @@ spec:
           serviceAccountName: eazybank-frontend-sa
           containers:
             - name: trivy
-              image: aquasec/trivy:latest
+              image: aquasec/trivy:0.50.1
               command:
                 - sh
                 - -c
