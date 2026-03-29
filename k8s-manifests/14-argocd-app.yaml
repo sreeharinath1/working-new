@@ -35,7 +35,7 @@ spec:
 
   # ── Allowed source repositories ──────────────────────────────────
   sourceRepos:
-    - "https://github.com/sreeharinath1/microservices.git"   # ← REPLACE
+    - "https://github.com/sreeharinath1/working-new.git"
     - "https://charts.helm.sh/stable"
     - "https://prometheus-community.github.io/helm-charts"
 
@@ -65,9 +65,9 @@ spec:
       kind: "*"
 
   # ── Deny creating dangerous resources ────────────────────────────
-  namespaceResourceBlacklist:
-    - group: ""
-      kind: ResourceQuota   # managed manually in 00-namespace.yaml
+#  namespaceResourceBlacklist:
+ #   - group: ""
+  #    kind: ResourceQuota   # managed manually in 00-namespace.yaml
 
   # ── Sync windows — prevent auto-sync during business hours ────────
   syncWindows:
@@ -99,9 +99,9 @@ spec:
 
   # ── Source — your Git repo ────────────────────────────────────────
   source:
-    repoURL:        "https://github.com/sreeharinath1/microservices.git"   # ← REPLACE
+    repoURL:        "https://github.com/sreeharinath1/working-new.git"
     targetRevision: main                          # branch / tag / commit SHA
-    path:           "k8s"                         # folder containing YAMLs 00-13
+    path:           "k8s-manifests"
 
   # ── Destination ───────────────────────────────────────────────────
   destination:
@@ -164,9 +164,9 @@ metadata:
 spec:
   project: eazybank
   source:
-    repoURL:        "https://github.com/sreeharinath1/microservices.git"   # ← REPLACE
+    repoURL:        "https://github.com/sreeharinath1/working-new.git"
     targetRevision: main
-    path:           "k8s/monitoring"     # 11-monitoring.yaml, 12-elk-stack.yaml
+    path:           "k8s-manifests"
   destination:
     server:    "https://kubernetes.default.svc"
     namespace: monitoring
